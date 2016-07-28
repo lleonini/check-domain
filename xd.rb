@@ -4,71 +4,169 @@ require 'uri'
 require 'htmlentities'
 require 'json'
 require 'net/http'
-require 'pp'
+require 'ipaddress'
 
-def fetch(url)
-	res = fetch_follow(url)
-	if res.code.to_i == 200 then
-		c = res.code.to_s.light_green
-	else
-		c = res.code.to_s.light_red
+
+def exec(command)
+	o = `#{command}`
+	return o
+end
+
+def show_host(host)
+	if (host =~ /edgesuite/ or host =~ /edgekey/) then
+		if host =~ /staging/ then
+			return "<AKAMAI Staging>".cyan
+		else
+			return "<AKAMAI Prod>".light_magenta
+		end
 	end
+	ip = toIP(host)
+	if host =~ /clara.net/ or exec("host #{ip}") =~ /clara.net/ then
+		if host == ip then
+			return "<CLARANET: #{host}>".light_yellow
+		else
+			if ip then
+				return "<CLARANET: #{host} #{ip}>".light_yellow
+			else
+				return "<CLARANET: #{host} domain not existing ?>".light_yellow.on_red
+			end
+		end
+	end
+	if host == ip then
+		return "<#{host}>".light_yellow
+	else
+		if ip then
+			return "<#{host} #{ip}>".light_yellow
+		else
+			return "<#{host} domain not existing ?>".light_yellow.on_red
+		end
+	end
+end
+
+def show_domain(name)
+	ip_dns = toIP(name)
+	ip_local = localIP(name)
+	o = "#{name.white.on_blue}"
+	if ip_dns then
+		if ip_dns == ip_local then
+			return o + " - DNS IP: #{ip_dns.black.on_green}"
+		else
+			return o + " - DNS IP: #{ip_dns.black.on_green} - Local IP: #{ip_local.white.on_red}"
+		end
+	else
+		return o + " - " + " domain not existing ? ".white.on_red
+	end
+end
+
+def analyze_domain(domain)
+	t_out = {}
+	threads = []
+	domain['hosts'].each {|host|
+		threads << Thread.new {
+			name = domain['name']
+			out = indent(1, show_host(host))
+
+			if domain['ssl'] then
+				url = 'https://' + name + domain['path']
+			else
+				url = 'http://' + name + domain['path']
+			end
+			out += indent(2, url)
+			o = headers(name, host, url)
+			if o =~ /200 OK/ then
+				o.lines.each { |l|
+					l.strip!
+					if l =~ /HTTP\// or l =~ /Server: / or l =~ /Location: / then
+						out += indent(3, l.light_green)
+					end
+				}
+				out += indent(2, "Content: ")
+				body = body(name, host, url)
+				if body =~ /#{domain['content']}/ then
+					out += indent(3, "OK: ".light_green + domain['content']) 
+				else
+					out += indent(3, "ERROR: ".light_red + domain['content']) 
+				end
+			else
+				if o =~ /HTTP\// then
+					out += indent(3, o.strip.light_red)
+				else
+					out += indent(3, o.strip.white.on_red)
+				end
+			end
+
+			if domain['ssl'] then
+				out += indent(2, "SSL: ")
+				out += indent(3, ssl(host, name))
+			end
+			t_out[host] = out + "\n"
+		}
+	}
+	threads.each { |thr| thr.join }
+	out = show_domain(domain['name']) + "\n\n"
+	domain['hosts'].each { |host| out += t_out[host] }
+	return out + "\n"
+end
 	
-	if url.to_s == res.uri.to_s then
-		return "#{c} #{res.uri}"
+def localIP(host)
+	o = exec("getent ahosts #{host}")
+	if o.length > 1 then
+		return o.lines[0].split(' ')[0]
 	else
-		return "#{c} #{url} => #{res.uri}"
+		return false
 	end
 end
 
-def fetch_follow(url)
-	res = Net::HTTP.get_response(URI.parse(url.to_s))
-	if res.code.to_i == 301 then
-		return fetch_follow(res['location'])
-	else
-		return res
+$to_ip_cache = {}
+def toIP(host)
+	if IPAddress.valid? host then
+		return host
 	end
+	if ! $to_ip_cache.key?(host) then
+		$to_ip_cache[host] = _toIP(host)
+	end
+	return $to_ip_cache[host]
 end
-
-def findIp(domain)
-	dns = `host #{domain}`
-	public_ips = []
+def _toIP(host)
+	dns = exec("host #{host}")
 	dns.split("\n").each do |line|
+		# XXX.in-addr.arpa has no PTR record
+		# XXX.in-addr.arpa. not found: 3(NXDOMAIN)
 		if line =~ /has address/ then
 			return line.split()[3]
-		end
-		# already an IP
-		if line =~ /domain name pointer/ then
-			return domain
 		end
 	end
 	return false
 end
 
-def reverse(ip)
-	r = `dig +noall +answer -x #{ip}`
-	if r != "" then
-		return r.split()[4]
-	end
-	return ip
+def headers(host, ip, url)
+	ip = toIP(ip)
+	return exec("curl -sSLI --resolve #{host}:80:#{ip} --resolve #{host}:443:#{ip} #{url} 2>&1")
+end
+
+def body(host, ip, url)
+	ip = toIP(ip)
+	return exec("curl -sSL --resolve #{host}:80:#{ip} --resolve #{host}:443:#{ip} #{url} 2>&1")
 end
 
 def indent(level, s)
 	l = 0
-	o = ""
+	i = ""
 	while l < level
-		o +=  "  "
+		i +=  "  "
 		l += 1
 	end
+	o = ""
 	s.lines.each {|l|
-		puts o + l
+		o += i + l.strip.gsub("\n",'') + "\n"
 	}
+	return o
 end
 
 def ssl(ip, domain)
-	o = `openssl s_client -showcerts -servername #{domain} -connect #{ip}:443 2>&1 >/dev/null </dev/null`
+	o = exec("openssl s_client -showcerts -servername #{domain} -connect #{ip}:443 2>&1 >/dev/null </dev/null")
 	ok = true
-	if o =~ /unable to/ then
+	if o =~ /unable to/ or o=~ /verify error/ then
 		ok = false
 	end
 	o.lines.each {|l|
@@ -80,43 +178,35 @@ def ssl(ip, domain)
 			end
 		end
 	}
+	return o.lines[0].gsub("\n",'').white.on_red
 end
 
-puts ("Checks done from " + `GET http://ipecho.net/plain`).blue.on_white
+puts ("Checks from " + exec("GET http://ipecho.net/plain"))
 puts
 
 file = File.read('domains.json')
 data = JSON.parse(file)
 
+d = ARGV[0]
+
+#data['domains'].each {|domain|
+	#if !d or domain['name'] == d then
+		#puts analyze_domain(domain)
+	#end
+#}
+
+results = {}
+threads = []
 data['domains'].each {|domain|
-	name = domain['name']
-	puts "Domain: #{name.light_blue}"
-	puts
-	domain['hosts'].each {|host|
-		indent(1, "Host: #{host.light_yellow} (#{findIp(host)})")
-		puts
-
-		indent(2, "Content: ") 
-		url = 'http://' + name + domain['path']
-		c = "curl -sSLI --resolve #{name}:80:#{host} #{url} 2>&1"
-		o = `#{c}`
-		if o =~ /HTTP\// then
-			o.lines.each { |l|
-				l.strip!
-				if l =~ /HTTP\// or l =~ /Server: / or l =~ /Location: / then
-					if o =~ /200 OK/ then
-						indent(3, l.light_green)
-					else
-						indent(3, l.light_red)
-					end
-				end
-			}
-		else
-			indent(3, o.strip.white.on_red)
-		end
-
-		puts
-		indent(2, "SSL: " + ssl(host, name)) 
-		puts
-	}
+	if !d or domain['name'] == d then
+		threads << Thread.new {
+			results[domain] = analyze_domain(domain)
+		}
+	end
+}
+threads.each { |thr| thr.join }
+data['domains'].each {|domain|
+	if results[domain] then
+		puts results[domain]
+	end
 }
