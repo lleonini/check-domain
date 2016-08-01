@@ -9,7 +9,7 @@ require 'trollop'
 
 def exec(command)
 	o = `#{command}`
-	if $show_commands or $debug then puts command.black.on_white end
+	if $commands or $debug then puts command.black.on_white + "\n\n" end
 	if $debug then puts o.light_blue end
 	return o
 end
@@ -69,27 +69,35 @@ end
 def analyze_domain(domain)
 	t_out = {}
 	threads = []
+	if !domain.key?('hosts')
+		if $host
+			domain["hosts"] = [$host]
+		else
+			domain["hosts"] = [domain["name"]]
+		end
+	end
 	domain['hosts'].each do |host|
 		threads << Thread.new {
 			name = domain['name']
 			out = ''
 
-			if publicIP host
+			ip = publicIP host
+			if ip
 				out += indent(1, show_host(host))
 				ssl = domain['ssl']
-				if $force_ssl then ssl = true end
-				if $no_ssl then ssl = false end
+				if $ssl then ssl = true end
+				if $nossl then ssl = false end
 
 				url = 'http' + (if ssl then "s" else "" end) + '://' + name + (domain['path'] or "")
 				out += indent 2, url
-				o = rCurl name, publicIP(host), url
+				o = rCurl name, ip, url
 				out += indent 3, prettyCurl(o)
-				if o[0]['http_code'] == '200' then
+				if o[0]['stats']['http_code'] == '200'
 					if $content then content = $content end
 					if content
 						out += indent 2, "Content: "
-						if o[0]['content'] =~ /#{content}/
-							out += indent 3, "OK: ".light_green + content 
+						if o[0]['content'] =~ /([^^]{,25})#{content}([^$]{,25})/
+							out += indent 3, "...#{$1}".green + content.light_green + "#{$2}...".green 
 						else
 							out += indent 3, "ERROR: ".light_red + content 
 						end
@@ -99,10 +107,13 @@ def analyze_domain(domain)
 
 				if ssl
 					out += indent 2, "SSL: "
-					out += indent 3, ssl(host, name)
+					# SSL can be broken (detected by curl above) and then shown in green
+					# here because a valid certificate is given (but not corresponding to
+					# the domain)
+					out += indent 3, ssl(ip, name)
 				end
 			else
-				out += indent 1, "#{host} not found".white.on_red + "\n"
+				out += indent 1, " #{host} not found ".white.on_red + "\n"
 			end
 			t_out[host] = out + "\n"
 		}
@@ -110,7 +121,7 @@ def analyze_domain(domain)
 	threads.each { |thr| thr.join }
 	out = show_domain(domain['name']) + "\n\n"
 	domain['hosts'].each { |host| out += t_out[host] }
-	return out + "\n"
+	return out
 end
 
 def akamaiHost(host)
@@ -120,9 +131,9 @@ def akamaiHost(host)
 	false
 end
 
+# https://www.cloudflare.com/ips-v4
 def cloudflareIP?(ip)
 	ip = IPAddress ip
-	# https://www.cloudflare.com/ips-v4
 	list = <<-EOS
 		103.21.244.0/22
 		103.22.200.0/22
@@ -168,10 +179,9 @@ def cname(host)
 end
 # Try to find the first CNAME not in the same domain (if possible)
 def _cname(host)
-	o = exec "dig #{host} | awk '/;; ANSWER SECTION:/ {getline; print}'"
-	t = o.split[3]
-	cn = o.split[4].chop
-	if t == "CNAME"
+	o = exec "host #{host}"
+	if o.lines.first =~ /is an alias for (.*)\./
+		cn = $1
 		if tld(host) == tld(cn) 
 			return _cname cn
 		else
@@ -182,14 +192,19 @@ def _cname(host)
 end
 
 # Will NOT (by design) resolve with /etc/hosts
-$to_ip_cache = {}
+$public_ip_cache = {}
 def publicIP(host)
 	if IPAddress.valid? host then return host end
-	if ! $to_ip_cache.key?(host) then $to_ip_cache[host] = _publicIP host end
-	$to_ip_cache[host]
+	if ! $public_ip_cache.key?(host) then $public_ip_cache[host] = _publicIP host end
+	$public_ip_cache[host]
 end
 def _publicIP(host)
 	dns = exec "host #{host}"
+	# Some providers, if domain is not found, send anyway an IP (that will then
+	# redirect to their own custom error page...):
+	# www.qafsfda.com has address 31.199.53.10
+	# Host www.qafsfda.com not found: 3(NXDOMAIN)
+	if dns =~ /not found/ then return false end
 	dns.split("\n").each do |line|
 		# XXX.in-addr.arpa has no PTR record
 		# XXX.in-addr.arpa. not found: 3(NXDOMAIN)
@@ -199,7 +214,12 @@ def _publicIP(host)
 end
 
 def rCurl(host, ip, url)
-	o = exec 'curl -sSi --compressed -H "Accept-encoding: gzip" -w \'--STATS--\n' +
+	# time_namelookup always 0 because of resolve (and previous resolution)
+	o = exec 'curl -sSi -A "' + $agent + '" --compressed -H "Accept-encoding: gzip,deflate" ' +
+		'-H "Pragma:akamai-x-cache-on,akamai-x-cache-remote-on,akamai-x-check-cacheable,' +
+		'akamai-x-get-cache-key,akamai-x-get-extracted-values,akamai-x-get-nonces,' +
+		'akamai-x-get-ssl-client-session-id,akamai-x-get-true-cache-key,akamai-x-serial-no" ' +
+		'-w \'--STATS--\n' +
 		'http_code: %{http_code}\n' +
 		'size_download: %{size_download}\n' +
 		'speed_download: %{speed_download}\n' +
@@ -213,8 +233,14 @@ def rCurl(host, ip, url)
 		"--resolve #{host}:80:#{ip} --resolve #{host}:443:#{ip} '#{url}' 2>&1"
 
 	m = curlMap(url, o)
-	if m.key? 'Location'
-		rCurl(host, ip, m['Location']).push(m)
+	if m['headers'].key? 'Location'
+		if m['headers']['Location'] =~ URI::regexp
+			loc = m['headers']['Location']
+		else
+			uri = URI(url)
+			loc = uri.scheme + "://" + uri.host + m['headers']['Location']
+		end
+		rCurl(host, ip, loc).push(m)
 	else
 		[m]
 	end
@@ -226,32 +252,44 @@ def curlMap(url, s)
 		#puts "ERROR"
 	#end
 	o['title'] = s.lines.first.strip
+	o['headers'] = {}
 	s.lines.each do |l|
 		l.strip!
 		parts = l.split(': ')
-		#if parts.length == 1 then
-			#o['title'] = l
-		if parts.length > 1 then
-			o[parts[0]] = parts[1]
+		if parts.length > 1
+			o['headers'][parts[0]] = parts[1]
 		elsif l == '' then break end
 	end
 	show = false
 	o['content'] = ''
+	o['stats'] = {}
 	s.lines.each do |l|
 		l.strip!
 		if show == false
-			if l == '--STATS--'
+			if l.include? '--STATS--'
 				show = true
 			elsif
 				o['content'] += l
 			end
 		elsif
 			parts = l.split(': ')
-			if parts.length > 1 then
-				o[parts[0]] = parts[1]
+			if parts.length > 1
+				o['stats'][parts[0]] = parts[1]
 			end
 		end
 	end
+	# Extract charset
+	#if o['headers'].key?('Content-Type')
+		#options = o['headers']['Content-Type'].split(';')
+		#options.each do |option|
+			#option.strip!
+			#if option =~ /charset=(.*)/
+				#charset = $1
+			#end
+		#end
+	#end
+	# Trick to avoid further regex errors
+	o['content'] = o['content'].encode("UTF-16be", :invalid => :replace, :replace => '?').encode('UTF-8')
 	o
 end
 
@@ -263,10 +301,48 @@ def prettyCurl(co)
 		if cur['title'] =~ /curl/
 			return cur['title'].white.on_red + "\n\n"
 		end
-		o += cur['title'].light_green + " - " + (cur['time_total'].to_f * 1000).to_s + "ms\n"
-		['Server', 'Location', 'Content-Type'].each do |col|
-			if cur.key?(col)
-				o += col.green + ": " + cur[col] + "\n"
+		if i > 0 or cur['stats']['http_code'] == '200'
+			o += cur['title'].light_green + " - " + ((cur['stats']['time_total']).to_s + "s").yellow + "\n"
+		else
+			o += cur['title'].light_red + " - " + ((cur['stats']['time_total']).to_s + "s").yellow + "\n"
+		end
+		if $headers
+			cur['headers'].sort.each do |col, v|
+				if cur['headers'].key?(col) and col != "content"
+					o += col.green + ": " + v + "\n"
+				end
+			end
+		else
+			['Server', 'Location'].each do |col|
+				if cur['headers'].key?(col)
+					o += col.green + ": " + cur['headers'][col] + "\n"
+				end
+			end
+			if cur['stats']['http_code'] == '200'
+				c = ''
+				if cur['headers'].key?('Content-Type')
+					c += cur['headers']['Content-Type']
+					if cur['headers'].key?('Content-Length')
+						c += ", length: " + cur['headers']['Content-Length'].yellow
+					else
+						# Transfer-Encoding: chunked
+						c += ", length: " + cur['stats']['size_download'].yellow + " (chunked)"
+					end
+					if cur['headers'].key?('Content-Encoding')
+						c += ", " + cur['headers']['Content-Encoding'].green
+					else
+						c += ", " + "no compression".red
+					end
+				end
+				if c != ''
+					o += 'Content'.green + ": " + c + "\n"
+				end
+			end
+		end
+		if $stats
+			o += "Stats:\n".yellow
+			cur['stats'].each do |col, v|
+				o += col.green + ": " + v + "\n"
 			end
 		end
 		o += "\n"
@@ -312,37 +388,55 @@ def ssl(ip, domain)
 	o.lines[0].gsub("\n",'').white.on_red
 end
 
-opts = Trollop::options do
-  version "Domains Checker 1.0 (c) 2016 Lorenzo Leonini"
-  banner <<-EOS
+def findConfig(data, d)
+	data['domains'].each do |domain|
+		if (!d or domain['name'] == d or domain['alias'] == d) and domain['hosts']
+			return domain
+		end
+	end
+	false
+end
+
+$version = "Check Domain (XD) 1.0 (c) 2016 Lorenzo Leonini"
+$banner = <<-EOS
+#{$version}
+
 Usage:
-		dx [options] <config|domain|url>
+		xd [options] <config|domain|url>*
 
 where [options] are:
 
 EOS
+opts = Trollop::options do
+  version $version
+  banner $banner
   opt :list, "List all domains in config (default)"
+  opt :agent, "Alternate user agent", :type => :string, :default => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/49.0.2623.108 Safari/537.36'
   opt :all, "Check all domains in config"
-  opt :config, "Alternate config file", :type => :string, :default => nil
+  opt :config, "Alternate config file", :type => :string, :default => ENV['HOME'] + '/.domains.json'
   opt :content, "Check specific content", :type => :string, :default => nil
-  opt :host, "Host/IP of the vhost (only in command line mode)", :type => :string, :default => nil
+  opt :host, "Host/IP of the vhost (only if no config)", :type => :string, :default => nil
   opt :ssl, "Force SSL"
-  opt :nossl, "Force no SSL"
-  opt :commands, "Show executed command"
-  opt :debug, "Show all commands output"
+  opt :nossl, "Force without SSL"
+  opt :headers, "Show all headers"
+  opt :stats, "Show curl additional statistics"
+  opt :commands, "Show raw command"
+  opt :debug, "Show raw commands and outputs"
 end
 
 $list = opts[:list]
+$agent = opts[:agent]
 $all = opts[:all]
-$force_ssl = opts[:ssl]
-$no_ssl = opts[:nossl]
-$show_commands = opts[:commands]
-$debug = opts[:debug]
+$config = opts[:config]
 $content = opts[:content]
 $host = opts[:host]
-$config = ENV['HOME'] + '/.domains.json'
-if opts[:config] then $config = opts[:config] end
-$d = ARGV[0]
+$ssl = opts[:ssl]
+$nossl = opts[:nossl]
+$headers = opts[:headers]
+$stats = opts[:stats]
+$commands = opts[:commands]
+$debug = opts[:debug]
+$urls = ARGV
 
 begin
 	$data = JSON.parse(File.read($config))
@@ -351,53 +445,55 @@ rescue
 	$data = {"domains" => []}
 end
 
-if $list or (!$all and !$d)
-	puts "Alias/domains in config:\n\n"
+if !$urls then puts $version + "\n\nTry --help for help.\n\n" end
+if $list or (!$all and $urls.size == 0)
+	puts "Domains in current config (#{$config}):\n\n"
 	$data['domains'].each do |domain|
 		if domain['alias']
-			puts "#{domain['alias'].light_blue}: #{domain['name'].light_green}"
+			puts "#{domain['alias'].light_blue} - #{domain['name'].light_green}:"
 		else
 			puts domain['name'].light_blue
+		end
+		domain['hosts'].each do |host|
+			puts "\t#{host}"
 		end
 	end
 	exit
 end
 
-puts ("\nChecks from " + exec("GET http://ipecho.net/plain") + "\n").light_blue
+puts "\nChecks from ".blue + exec("GET http://ipecho.net/plain").light_blue + " - Agent: ".blue + $agent.light_blue + "\n\n"
+
+$to_analyze = []
+if $all then $to_analyze = $data['domains'] end
+$urls.each do |url|
+	config = findConfig($data, url)
+	if config
+		puts "'#{url}' found in config file".green
+		$to_analyze.push(config)
+	else
+		puts "'#{url}' not found in config file".yellow
+		domain = { "name" => url }
+		if url =~ URI::regexp
+			uri = URI(url)
+			domain["name"] = uri.host
+			domain["path"] = uri.path
+			if uri.scheme == "https"
+				domain["ssl"] = true
+			end
+		end
+		$to_analyze.push(domain)
+	end
+end
+puts
 
 $results = {}
 $threads = []
-$found = false
-$data['domains'].each do |domain|
-	if (!$d or domain['name'] == $d or domain['alias'] == $d) and domain['hosts']
-		$found = true
-		$threads << Thread.new { $results[domain] = analyze_domain domain }
-	end
+$to_analyze.each do |domain|
+	$threads << Thread.new { $results[domain] = analyze_domain domain }
 end
 $threads.each { |thr| thr.join }
-$data['domains'].each do |domain|
+$to_analyze.each do |domain|
 	if $results[domain]
 		puts $results[domain]
-	end
-end
-
-if $d and !$found
-	puts "'#{$d}' not found in config file => command line mode".light_red
-	puts
-	$domain = { "name" => $d }
-	if $d =~ URI::regexp
-		uri = URI($d)
-		$domain["name"] = uri.host
-		$domain["path"] = uri.path
-		if uri.scheme == "https"
-			$domain["ssl"] = true
-		end
-	end
-	if !$host then $host = publicIP $domain["name"] end
-	if $host
-		$domain["hosts"] = [$host]
-		puts analyze_domain $domain
-	else
-		puts "No IP found for #{$domain['name']}".white.on_red
 	end
 end
