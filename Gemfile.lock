@@ -1,0 +1,19 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    colorize (0.8.1)
+    ipaddress (0.8.3)
+    json (2.0.2)
+    trollop (2.1.2)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  colorize
+  ipaddress
+  json
+  trollop
+
+BUNDLED WITH
+   1.11.2
