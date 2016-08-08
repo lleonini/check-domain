@@ -1,6 +1,6 @@
 # Check Domain - XD
 
-Check Domain is an HTTP/HTTPS domain tool that presents a quick overview of servers
+Check Domain is an HTTP/HTTPS domain tool that presents an overview of servers
 settings, certificates, headers, redirections, CNAME/IP, CDN...
 
 It was initially developped to compare results between origin servers and AKAMAI
@@ -16,16 +16,19 @@ command lines that you can then modify to suit your needs.
 
 ## Features
 
-- Integrated host spoofing: no need to modify /etc/hosts anymore
-- Mutiple vhosts for a domain (in config file)
-- SSL certificate checker
-- Compression checks
-- Content checks
-- Show CNAME and IPs
-- CDN detection: AKAMAI, CloudFront, CloudFlare, MaxCDN, Fastly
+- Integrated host spoofing:
+		- no need to edit /etc/hosts
+		- output is independent of /etc/hosts (except to show local IP if one)
+- Show CNAME, IPs and CDN:
+	- CDN support: AKAMAI, CloudFront, CloudFlare, MaxCDN, Fastly
+	- AKAMAI: debug headers, detection of staging and production networks
+- Support mutiple vhosts for one domain (in config file)
+- SSL certificate check
+- Compression check
+- Content check
 - Parallel command execution for faster results
 - Highlighted output
-- Show CNAME, public IP and local IP (if you have set one in /etc/hosts)
+- Follow HTTP redirections
 - Performance indicators
 - Use `curl`, `host` and `openssl` behind the scene
 
@@ -44,3 +47,8 @@ TODO
 ## Config file
 
 TODO syntax
+
+## TODO
+
+- Show HTTP/2 infos
+- Support IPv6

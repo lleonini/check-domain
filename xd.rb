@@ -1,57 +1,145 @@
 #!/usr/bin/ruby
 # Copyright (c) 2016 Lorenzo Leonini
-require 'colorize'
 require 'json'
 require 'net/http'
 require 'ipaddress'
 require 'trollop'
+require 'rainbow'
+
+# Colors
+class String
+	def s(name = 'default')
+		light_green = '#33ff33'
+		light_blue = '#8888ff'
+		light_cyan = '#33ffff'
+		light_magenta = '#ff33ff'
+		light_red = '#ff0000'
+		light_yellow = '#ffff66'
+		white_cyan = '#66bbbb'
+		white_magenta = '#bb66bb'
+		
+		host_background = '#333333'
+		cdn = '#7777ff'
+		case name
+		when 'command'
+			Rainbow(self).black.background(:white)
+		when 'debug'
+			Rainbow(self).color(light_blue)
+		when 'domain.name'
+			Rainbow(self).white.background(:blue)
+		when 'domain.cname'
+			Rainbow(self).yellow
+		when 'domain.ip'
+			Rainbow(self).color(light_yellow)
+		when 'domain.local_ip'
+			Rainbow(self).color(light_red)
+		when 'host.h'
+			Rainbow(self).white.background(host_background)
+		when 'host.ip'
+			Rainbow(self).color('#888888').background(host_background)
+		when 'cdn'
+			Rainbow(self).color(cdn)
+		when 'cdn.label'
+			Rainbow(self).black.background(cdn)
+		when 'cdn.akamai.staging'
+			Rainbow(self).color('#55ffff')
+		when 'cdn.akamai.staging.label'
+			Rainbow(self).black.background(white_cyan)
+		when 'cdn.akamai.prod'
+			Rainbow(self).color('#ff55ff')
+		when 'cdn.akamai.prod.label'
+			Rainbow(self).black.background(white_magenta)
+		when 'url.http'
+			Rainbow(self).color('#bb4444')
+		when 'url.https'
+			Rainbow(self).color('#66bb66')
+		when 'url.host'
+			Rainbow(self).white
+		when 'url.path'
+			Rainbow(self).color('#66bbbb')
+		when 'curl.stats'
+			Rainbow(self).orange
+		when 'curl.http.ok'
+			Rainbow(self).color(light_green)
+		when 'curl.http.redirect'
+			Rainbow(self).orange
+		when 'curl.http.error'
+			Rainbow(self).color(light_red)
+		when 'curl.header'
+			Rainbow(self).color('#00aa00')
+		when 'curl.header.value'
+			Rainbow(self).color('#cccccc')
+		when 'curl.info'
+			Rainbow(self).color('#ffff66')
+		when 'curl.warn'
+			Rainbow(self).color(light_red)
+		when 'curl.ok'
+			Rainbow(self).color(light_green)
+		when 'content'
+			Rainbow(self).green
+		when 'content.found'
+			Rainbow(self).color(light_green)
+		when 'content.notfound'
+			Rainbow(self).color(light_red)
+		when 'ssl.ok'
+			Rainbow(self).color(light_green)
+		when 'ssl.error'
+			Rainbow(self).color(light_red)
+		when 'config.alias'
+			Rainbow(self).color(light_blue)
+		when 'config.domain'
+			Rainbow(self).color(light_green)
+		when 'error'
+			Rainbow(self).white.background(:red)
+		when 'blue'
+			Rainbow(self).blue.bright.underline
+		else
+			self
+		end
+	end
+end
 
 def exec(command)
 	o = `#{command}`
-	if $commands or $debug then puts command.black.on_white + "\n\n" end
-	if $debug then puts o.light_blue end
+	if $commands or $debug then puts command.s('command') + "\n\n" end
+	if $debug then puts o.s('debug') end
 	return o
 end
 
 def format_host(host, name)
 	ip = public_ip(host)
-	if !ip then return " #{host} domain not existing ? ".white.on_red end
+	if !ip then return " #{host} domain not existing ? ".s('error') end
 	label = cdn_label(host)
-
 	if host != name
 		if ip != host
-			o = " #{host}".black.on_light_white + " (#{ip}) ".light_black.on_light_white
+			o = " #{host}".s('host.h') + " (#{ip}) ".s('host.ip')
 		else
-			o = " #{host} ".black.on_light_white
+			o = " #{host} ".s('host.h')
 		end
 	else
-		o = " #{ip} ".black.on_white
+		o = " #{ip} ".s('host.h')
 	end
 	o + label + "\n\n"
 end
 
 def format_domain(name)
 	ip = public_ip(name)
-	o = " #{name} ".light_white.on_blue
+	o = " #{name} ".s('domain.name')
 	if ip
 		label = cdn_label(name, false)
 		if label != '' then o += ' CDN: ' + label end
-		
 		cn = cname(name)
-		
 		if cn != ip and cn != name
-			o += ' CNAME: ' + cn.yellow
+			o += ' CNAME: ' + cn.s('domain.cname')
 		end
-		
-		o += " IP: #{ip.light_green}"
-		
+		o += " IP: #{ip.s('domain.ip')}"
 		ip_local = local_ip(name)
 		if ip != ip_local
-			o += " Local IP: #{ip_local.red}"
+			o += " Local IP: #{ip_local.s('domain.local_ip')}"
 		end
 		return o
 	else
-		return o + ' - ' + ' domain not existing ? '.white.on_red
+		return o + ' - ' + ' domain not existing ? '.s('error')
 	end
 end
 
@@ -82,15 +170,15 @@ def analyze_domain(domain)
 				out += indent(2, colorize_url(url))
 				o = r_curl(name, ip, url)
 				out += indent(3, pretty_curl(o))
-				if o[0]['stats']['http_code'] == '200'
+				if o[0].key?('stats') and o[0]['stats']['http_code'] == '200'
 					content = domain['content']
 					if $content then content = $content end
 					if content
 						out += indent(2, 'Content: ')
 						if o[0]['content'] =~ /([^\n]{,25})#{content}([^\n]{,25})/
-							out += indent(3, "...#{$1}".green + content.light_green + "#{$2}...".green )
+							out += indent(3, "...#{$1}".s('content') + content.s('content.found') + "#{$2}...".s('content'))
 						else
-							out += indent(3, 'Not found: '.light_red + content.red)
+							out += indent(3, ('Not found: ' + content).s('content.notfound'))
 						end
 						out += "\n"
 					end
@@ -105,7 +193,7 @@ def analyze_domain(domain)
 					out += indent(3, ssl(ip, name)) + "\n"
 				end
 			else
-				out += indent(1, " #{host} not found ".white.on_red + "\n")
+				out += indent(1, " #{host} not found ".s('error') + "\n\n")
 			end
 			t_out[host] = out
 		}
@@ -121,22 +209,22 @@ def cdn_label(host, background = true)
 	if cdn_name == 'AKAMAI'
 		if cdn_comp == 'staging'
 			if background
-				return ' AKAMAI Staging '.black.on_cyan
+				return ' AKAMAI Staging '.s('cdn.akamai.staging.label')
 			else
-				return 'AKAMAI Staging'.light_cyan
+				return 'AKAMAI Staging'.s('cdn.akamai.staging')
 			end
 		else
 			if background
-				return ' AKAMAI Prod '.black.on_magenta
+				return ' AKAMAI Prod '.s('cdn.akamai.prod.label')
 			else
-				return 'AKAMAI Prod'.light_magenta
+				return 'AKAMAI Prod'.s('cdn.akamai.prod')
 			end
 		end
 	elsif cdn_name
 		if background
-			return " #{cdn_name} ".black.on_blue
+			return " #{cdn_name} ".s('cdn.label')
 		else
-			return cdn_name.light_blue
+			return cdn_name.s('cdn')
 		end
 	end
 	''
@@ -292,11 +380,14 @@ end
 
 # recursive curl
 def r_curl(host, ip, url)
-	# time_namelookup always = 0 because of resolve (and previous resolution)
-	o = exec('curl -sSi -A "' + $agent + '" --compressed -H "Accept-encoding: gzip,deflate" ' +
-		'-H "Pragma:akamai-x-cache-on,akamai-x-cache-remote-on,akamai-x-check-cacheable,' +
+	akamai_headers = 
+		'Pragma:akamai-x-cache-on,akamai-x-cache-remote-on,akamai-x-check-cacheable,' +
 		'akamai-x-get-cache-key,akamai-x-get-extracted-values,akamai-x-get-nonces,' +
-		'akamai-x-get-ssl-client-session-id,akamai-x-get-true-cache-key,akamai-x-serial-no" ' +
+		'akamai-x-get-ssl-client-session-id,akamai-x-get-true-cache-key,akamai-x-serial-no'
+	# time_namelookup always = 0 because of resolve (and previous resolution)
+	o = exec('curl --connect-timeout ' + $timeout.to_s + ' -m ' + ($timeout + 10).to_s +
+		' -sSi -A "' + $agent + '" --compressed -H "Accept-encoding: gzip,deflate" ' +
+		'-H "' + akamai_headers + '" ' +
 		'-w \'--STATS--\n' +
 		'http_code: %{http_code}\n' +
 		'size_download: %{size_download}\n' +
@@ -310,17 +401,23 @@ def r_curl(host, ip, url)
 		'time_total: %{time_total}\n\' ' +
 		"--resolve #{host}:80:#{ip} --resolve #{host}:443:#{ip} '#{url}' 2>&1")
 
-	m = parse_curl(url, o)
-	if m['headers']['location']
-		if m['headers']['location'] =~ URI::regexp
-			loc = m['headers']['location']
-		else
-			uri = URI(url)
-			loc = uri.scheme + '://' + uri.host + m['headers']['location']
-		end
-		r_curl(host, ip, loc).push(m)
+	# major error
+	# curl: (60) server certificate verification failed. CAfile: /etc/ssl/certs/ca-certificates.crt CRLfile: none
+	if o.lines.first =~ /^curl: \(/
+		[{'url' => url, 'error' => o.lines.first.chop}]
 	else
-		[m]
+		m = parse_curl(url, o)
+		if m['headers']['location']
+			if m['headers']['location'] =~ URI::regexp
+				loc = m['headers']['location']
+			else
+				uri = URI(url)
+				loc = uri.scheme + '://' + uri.host + m['headers']['location']
+			end
+			r_curl(host, ip, loc).push(m)
+		else
+			[m]
+		end
 	end
 end
 
@@ -374,15 +471,15 @@ def colorize_url(url)
 	uri = URI(url)
 	o = ''
 	if uri.scheme == 'https'
-		o += uri.scheme.light_magenta
+		o += uri.scheme.s('url.https')
 	elsif uri.scheme == 'http'
-		o += uri.scheme.cyan
+		o += uri.scheme.s('url.http')
 	end
 	if uri.host
-		o += '://'.cyan + uri.host.white
+		o += '://'.s('url.path') + uri.host.s('url.host')
 	end
 	if uri.path
-		o += uri.path.cyan
+		o += uri.path.s('url.path')
 	end
 	o
 end
@@ -392,57 +489,54 @@ def pretty_curl(co)
 	i = co.size - 1
 	while i >= 0
 		cur = co[i]
-		if cur['title'] =~ /curl/
-			return cur['title'].white.on_red + "\n\n"
+		if cur.key?('error')
+			return o + cur['error'].s('error') + "\n\n"
 		end
-		if i > 0 or cur['stats']['http_code'] == '200'
-			o += cur['title'].light_green + ' - ' + ((cur['stats']['time_total']).to_s + "s").yellow + "\n"
+		if i > 0
+			o += cur['title'].s('curl.http.redirect') + ' - ' + ((cur['stats']['time_total']).to_s + "s").s('curl.info') + "\n"
+		elsif cur['stats']['http_code'] == '200'
+			o += cur['title'].s('curl.http.ok') + ' - ' + ((cur['stats']['time_total']).to_s + "s").s('curl.info') + "\n"
 		else
-			o += cur['title'].light_red + ' - ' + ((cur['stats']['time_total']).to_s + "s").yellow + "\n"
+			o += cur['title'].s('curl.http.error') + ' - ' + ((cur['stats']['time_total']).to_s + "s").s('curl.info') + "\n"
 		end
 		if $headers
 			cur['headers'].sort.each do |col, v|
 				if cur['headers'][col] and col != 'content'
-					o += col.green + ': ' + v + "\n"
+					o += col.s('curl.header') + ': ' + v.s('curl.header.value') + "\n"
 				end
 			end
 		else
-			#['server', 'location'].each do |col|
-				#if cur['headers'][col]
-					#o += col.green + ': ' + cur['headers'][col] + "\n"
-				#end
-			#end
 			if cur['headers']['server']
-				o += 'server'.green + ': ' + cur['headers']['server'] + "\n"
+				o += 'server'.s('curl.header') + ': ' + cur['headers']['server'].s('curl.header.value') + "\n"
 			end
 			if cur['headers']['location']
-				o += 'location'.green + ': ' + colorize_url(cur['headers']['location']) + "\n"
+				o += 'location'.s('curl.header') + ': ' + colorize_url(cur['headers']['location']) + "\n"
 			end
 			if cur['stats']['http_code'] == '200'
 				c = ''
 				if cur['headers']['content-type']
 					c += cur['headers']['content-type']
 					if cur['headers']['content-length']
-						c += ', length: ' + cur['headers']['content-length'].yellow
+						c += ', length: ' + cur['headers']['content-length'].s('curl.info')
 					else
 						# Transfer-Encoding: chunked
-						c += ', length: ' + cur['stats']['size_download'].yellow + ' (chunked)'
+						c += ', length: ' + cur['stats']['size_download'].s('curl.info') + ' (chunked)'
 					end
 					if cur['headers']['content-encoding']
-						c += ', ' + cur['headers']['content-encoding'].green
+						c += ', ' + cur['headers']['content-encoding'].s('curl.ok')
 					else
-						c += ', ' + 'no compression'.red
+						c += ', ' + 'no compression'.s('curl.warn')
 					end
 				end
 				if c != ''
-					o += 'content'.green + ': ' + c + "\n"
+					o += 'content'.s('curl.header') + ': ' + c.s('curl.header.value') + "\n"
 				end
 			end
 		end
 		if $stats
-			o += "Stats:\n".yellow
+			o += "Stats:\n".s('curl.stats')
 			cur['stats'].each do |col, v|
-				o += col.green + ': ' + v + "\n"
+				o += col.s('curl.header') + ': ' + v.s('curl.header.value') + "\n"
 			end
 		end
 		o += "\n"
@@ -479,13 +573,13 @@ def ssl(ip, domain)
 	o.lines.each do |l|
 		if l =~ /depth=0/
 			if ok
-				return l.gsub("\n", '').light_green
+				return l.gsub("\n", '').s('ssl.ok')
 			else
-				return l.gsub("\n", '').light_red
+				return l.gsub("\n", '').s('ssl.error')
 			end
 		end
 	end
-	o.lines[0].gsub("\n", '').white.on_red
+	o.lines[0].gsub("\n", '').s('error')
 end
 
 def find_config(data, d)
@@ -522,6 +616,7 @@ opts = Trollop::options do
   opt :stats, 'Show curl additional statistics'
   opt :commands, 'Show raw command'
   opt :debug, 'Show raw commands and outputs'
+  opt :timeout, 'Timeout (curl)', :type => :int, :default => 30
 end
 
 $list = opts[:list]
@@ -536,12 +631,13 @@ $headers = opts[:headers]
 $stats = opts[:stats]
 $commands = opts[:commands]
 $debug = opts[:debug]
+$timeout = opts[:timeout]
 $urls = ARGV
 
 begin
 	$data = JSON.parse(File.read($config))
 rescue
-	puts "Config file not found: #{$config}"
+	#puts "Config file not found: #{$config}"
 	$data = {'domains' => []}
 end
 
@@ -550,9 +646,9 @@ if $list or (!$all and $urls.size == 0)
 	puts "Domains in current config (#{$config}):\n\n"
 	$data['domains'].each do |domain|
 		if domain['alias']
-			puts "#{domain['alias'].light_blue} - #{domain['name'].light_green}:"
+			puts "#{domain['alias'].s('config.alias')} - #{domain['name'].s('config.domain')}:"
 		else
-			puts domain['name'].light_blue
+			puts domain['name'].s('config.alias')
 		end
 		if domain['hosts']
 			domain['hosts'].each do |host|
@@ -564,16 +660,15 @@ if $list or (!$all and $urls.size == 0)
 	exit
 end
 
-puts
 $to_analyze = []
 if $all then $to_analyze = $data['domains'] end
 $urls.each do |url|
 	config = find_config($data, url)
 	if config
-		puts "'#{url}' found in config file".green
+		puts "'#{url}' found in config file".s('config.found')
 		$to_analyze.push(config)
 	else
-		puts "'#{url}' not found in config file".yellow
+		#puts "'#{url}' not found in config file".s('config.notfound')
 		domain = { 'name' => url }
 		if url =~ URI::regexp
 			uri = URI(url)
@@ -589,9 +684,9 @@ end
 
 $public_ip = exec('GET http://ipecho.net/plain')
 if IPAddress.valid?($public_ip)
-	puts "\nChecks from ".blue + $public_ip.light_blue + ' - Agent: '.blue + $agent.light_blue + "\n\n"
+	puts "\nChecks from ".s('intro') + $public_ip.s('intro.value') + ' - Agent: '.s('intro') + $agent.s('intro.value') + "\n\n"
 else
-	puts "\nCannot get public IP. Are you connected to internet ?".light_red + "\n\n"
+	puts "\nCannot get public IP. Are you connected to internet ?".s('error') + "\n\n"
 end
 
 $results = {}
