@@ -10,7 +10,7 @@ require 'rainbow'
 class String
 	def s(name = 'default')
 		light_green = '#33ff33'
-		light_blue = '#8888ff'
+		light_blue = '#6688cc'
 		light_cyan = '#33ffff'
 		light_magenta = '#ff33ff'
 		light_red = '#ff0000'
@@ -21,6 +21,10 @@ class String
 		host_background = '#333333'
 		cdn = '#7777ff'
 		case name
+		when 'app'
+			Rainbow(self).color(light_blue)
+		when 'error'
+			Rainbow(self).white.background(:red)
 		when 'command'
 			Rainbow(self).black.background(:white)
 		when 'debug'
@@ -58,11 +62,11 @@ class String
 		when 'url.path'
 			Rainbow(self).color('#66bbbb')
 		when 'curl.stats'
-			Rainbow(self).orange
+			Rainbow(self).color(:orange)
 		when 'curl.http.ok'
 			Rainbow(self).color(light_green)
 		when 'curl.http.redirect'
-			Rainbow(self).orange
+			Rainbow(self).color(:orange)
 		when 'curl.http.error'
 			Rainbow(self).color(light_red)
 		when 'curl.header'
@@ -89,10 +93,10 @@ class String
 			Rainbow(self).color(light_blue)
 		when 'config.domain'
 			Rainbow(self).color(light_green)
-		when 'error'
-			Rainbow(self).white.background(:red)
-		when 'blue'
-			Rainbow(self).blue.bright.underline
+		when 'config.found'
+			Rainbow(self).green
+		when 'intro.value'
+			Rainbow(self).color(light_blue)
 		else
 			self
 		end
@@ -167,9 +171,10 @@ def analyze_domain(domain)
 				if $nossl then ssl = false end
 
 				url = 'http' + (if ssl then 's' else '' end) + '://' + name + (domain['path'] or '')
-				out += indent(2, colorize_url(url))
-				o = r_curl(name, ip, url)
-				out += indent(3, pretty_curl(o))
+				auth = domain['auth']
+				if $auth then auth = $auth end
+				o = r_curl(name, ip, url, auth)
+				out += indent(2, pretty_curl(o))
 				if o[0].key?('stats') and o[0]['stats']['http_code'] == '200'
 					content = domain['content']
 					if $content then content = $content end
@@ -379,14 +384,17 @@ def rev_ip(ip)
 end
 
 # recursive curl
-def r_curl(host, ip, url)
+def r_curl(host, ip, url, auth = nil)
 	akamai_headers = 
 		'Pragma:akamai-x-cache-on,akamai-x-cache-remote-on,akamai-x-check-cacheable,' +
 		'akamai-x-get-cache-key,akamai-x-get-extracted-values,akamai-x-get-nonces,' +
 		'akamai-x-get-ssl-client-session-id,akamai-x-get-true-cache-key,akamai-x-serial-no'
 	# time_namelookup always = 0 because of resolve (and previous resolution)
-	o = exec('curl --connect-timeout ' + $timeout.to_s + ' -m ' + ($timeout + 10).to_s +
-		' -sSi -A "' + $agent + '" --compressed -H "Accept-encoding: gzip,deflate" ' +
+	o = exec(
+		'curl -sSi --connect-timeout ' + $timeout.to_s + ' -m ' + ($timeout + 10).to_s + ' ' +
+		($agent ? " -A \"#{$agent}\" " : '') +
+		(auth ? " -u \"#{auth}\" " : '') +
+		'--compressed -H "Accept-encoding: gzip,deflate" ' +
 		'-H "' + akamai_headers + '" ' +
 		'-w \'--STATS--\n' +
 		'http_code: %{http_code}\n' +
@@ -414,7 +422,7 @@ def r_curl(host, ip, url)
 				uri = URI(url)
 				loc = uri.scheme + '://' + uri.host + m['headers']['location']
 			end
-			r_curl(host, ip, loc).push(m)
+			r_curl(host, ip, loc, auth).push(m)
 		else
 			[m]
 		end
@@ -489,58 +497,69 @@ def pretty_curl(co)
 	i = co.size - 1
 	while i >= 0
 		cur = co[i]
-		if cur.key?('error')
-			return o + cur['error'].s('error') + "\n\n"
+		o += colorize_url(cur['url'])
+		if !cur.key?('error')
+			o += ' - ' + ((cur['stats']['time_total']).to_s + "s").s('curl.info')
 		end
-		if i > 0
-			o += cur['title'].s('curl.http.redirect') + ' - ' + ((cur['stats']['time_total']).to_s + "s").s('curl.info') + "\n"
-		elsif cur['stats']['http_code'] == '200'
-			o += cur['title'].s('curl.http.ok') + ' - ' + ((cur['stats']['time_total']).to_s + "s").s('curl.info') + "\n"
-		else
-			o += cur['title'].s('curl.http.error') + ' - ' + ((cur['stats']['time_total']).to_s + "s").s('curl.info') + "\n"
-		end
-		if $headers
-			cur['headers'].sort.each do |col, v|
-				if cur['headers'][col] and col != 'content'
-					o += col.s('curl.header') + ': ' + v.s('curl.header.value') + "\n"
-				end
-			end
-		else
-			if cur['headers']['server']
-				o += 'server'.s('curl.header') + ': ' + cur['headers']['server'].s('curl.header.value') + "\n"
-			end
-			if cur['headers']['location']
-				o += 'location'.s('curl.header') + ': ' + colorize_url(cur['headers']['location']) + "\n"
-			end
-			if cur['stats']['http_code'] == '200'
-				c = ''
-				if cur['headers']['content-type']
-					c += cur['headers']['content-type']
-					if cur['headers']['content-length']
-						c += ', length: ' + cur['headers']['content-length'].s('curl.info')
-					else
-						# Transfer-Encoding: chunked
-						c += ', length: ' + cur['stats']['size_download'].s('curl.info') + ' (chunked)'
-					end
-					if cur['headers']['content-encoding']
-						c += ', ' + cur['headers']['content-encoding'].s('curl.ok')
-					else
-						c += ', ' + 'no compression'.s('curl.warn')
-					end
-				end
-				if c != ''
-					o += 'content'.s('curl.header') + ': ' + c.s('curl.header.value') + "\n"
-				end
-			end
-		end
-		if $stats
-			o += "Stats:\n".s('curl.stats')
-			cur['stats'].each do |col, v|
+		o += "\n"
+		o += indent(1, pretty_curl_p(cur))
+		o += "\n"
+		i -= 1
+	end
+	o
+end
+
+def pretty_curl_p(cur)
+	o = ''
+	if cur.key?('error')
+		return o + cur['error'].s('error') + "\n\n"
+	end
+	http_code = cur['stats']['http_code'].to_i
+	if http_code >= 200 and http_code < 300
+		o += cur['title'].s('curl.http.ok')
+	elsif http_code >= 300 and http_code < 400
+		o += cur['title'].s('curl.http.redirect')
+	else
+		o += cur['title'].s('curl.http.error')
+	end
+	o += "\n"
+	
+	if $headers
+		cur['headers'].sort.each do |col, v|
+			if cur['headers'][col] and col != 'content'
 				o += col.s('curl.header') + ': ' + v.s('curl.header.value') + "\n"
 			end
 		end
-		o += "\n"
-		i -= 1
+	else
+		if cur['headers']['server']
+			o += 'server'.s('curl.header') + ': ' + cur['headers']['server'].s('curl.header.value') + "\n"
+		end
+		if cur['stats']['http_code'] == '200'
+			c = ''
+			if cur['headers']['content-type']
+				c += cur['headers']['content-type']
+				if cur['headers']['content-length']
+					c += ', length: ' + cur['headers']['content-length'].s('curl.info')
+				else
+					# Transfer-Encoding: chunked
+					c += ', length: ' + cur['stats']['size_download'].s('curl.info') + ' (chunked)'
+				end
+				if cur['headers']['content-encoding']
+					c += ', ' + cur['headers']['content-encoding'].s('curl.ok')
+				else
+					c += ', ' + 'no compression'.s('curl.warn')
+				end
+			end
+			if c != ''
+				o += 'content'.s('curl.header') + ': ' + c.s('curl.header.value') + "\n"
+			end
+		end
+	end
+	if $stats
+		o += "Stats:\n".s('curl.stats')
+		cur['stats'].each do |col, v|
+			o += col.s('curl.header') + ': ' + v.s('curl.header.value') + "\n"
+		end
 	end
 	o
 end
@@ -562,7 +581,7 @@ def indent(level, s)
 		l += 1
 	end
 	o = ''
-	s.lines.each { |l| o += i + l.strip.gsub("\n",'') + "\n" }
+	s.lines.each { |l| o += i + l.rstrip.gsub("\n",'') + "\n" }
 	o
 end
 
@@ -591,7 +610,7 @@ def find_config(data, d)
 	nil
 end
 
-$version = 'Check Domain (XD) 1.0 (c) 2016 Lorenzo Leonini'
+$version = 'Check Domain (XD) 1.0 (c) 2016 Lorenzo Leonini'.s('app')
 $banner = <<-EOS
 #{$version}
 
@@ -605,21 +624,24 @@ opts = Trollop::options do
   version $version
   banner $banner
   opt :list, 'List all domains in config (default)'
-  opt :agent, 'Alternate user agent', :type => :string, :default => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/49.0.2623.108 Safari/537.36'
+  opt :auth, 'HTTP Basic Authentication "user:password"', :type => :string
+  opt :agent, 'Alternate user agent', :type => :string
   opt :all, 'Check all domains in config'
-  opt :config, 'Alternate config file', :type => :string, :default => ENV['HOME'] + '/.domains.json'
-  opt :content, 'Check specific content', :type => :string, :default => nil
-  opt :host, 'Host/IP of the vhost (only if no config)', :type => :string, :default => nil
+  opt :config, 'Alternate config file', :type => :string, :default => ENV['HOME'] + '/.xd.json'
+  opt :content, 'Check specific content', :type => :string
+  opt :host, 'Host/IP of the vhost (only if no config)', :type => :string
   opt :ssl, 'Force SSL'
   opt :nossl, 'Force without SSL'
   opt :headers, 'Show all headers'
   opt :stats, 'Show curl additional statistics'
   opt :commands, 'Show raw command'
   opt :debug, 'Show raw commands and outputs'
+	opt :color, 'Force color output'
   opt :timeout, 'Timeout (curl)', :type => :int, :default => 30
 end
 
 $list = opts[:list]
+$auth = opts[:auth]
 $agent = opts[:agent]
 $all = opts[:all]
 $config = opts[:config]
@@ -631,6 +653,7 @@ $headers = opts[:headers]
 $stats = opts[:stats]
 $commands = opts[:commands]
 $debug = opts[:debug]
+if opts[:color] then Rainbow.enabled = true end
 $timeout = opts[:timeout]
 $urls = ARGV
 
@@ -684,7 +707,8 @@ end
 
 $public_ip = exec('GET http://ipecho.net/plain')
 if IPAddress.valid?($public_ip)
-	puts "\nChecks from ".s('intro') + $public_ip.s('intro.value') + ' - Agent: '.s('intro') + $agent.s('intro.value') + "\n\n"
+	puts "\nChecks from ".s('intro') + $public_ip.s('intro.value') + ' ' +
+		($agent ? 'Agent: '.s('intro') + "#{$agent} ".s('intro.value') : '') + "\n\n"
 else
 	puts "\nCannot get public IP. Are you connected to internet ?".s('error') + "\n\n"
 end
