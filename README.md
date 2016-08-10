@@ -12,42 +12,92 @@ them to suit particular needs.
 ## Install
 
 - Packages: ruby 1.8+, curl 7.19+, openssl
-- bundle install
+- bundle install 
 
 ## Features
 
-- Integrated host spoofing:
-		- no need to edit /etc/hosts
-		- output is independent of /etc/hosts (except to show local IP if one)
-- Show CNAME, IPs and CDN:
-	- CDNs: AKAMAI, CloudFront, CloudFlare, MaxCDN, Fastly
+- Integrated host spoofing (no /etc/host dependency)
+- Highlight:
+	-	IPs
+	-	CNAME
+	- HTTP response code
+	-	Server
+	-	Redirections
+	-	Content: length, encoding, compression
+- CDN:
+  - Detection of AKAMAI, CloudFront, CloudFlare, MaxCDN and Fastly
 	- AKAMAI: debug headers, staging and production networks
 - Support mutiple vhosts for one domain (in config file)
-- SSL certificate check
-- Compression check
-- Content check
+- SSL certificates checking
 - Parallel command execution for faster results
-- Highlighted output
-- Follow HTTP redirections
 - Performance indicators
 - Behavior independent of HSTS settings
 - Use `curl`, `host` and `openssl` behind the scene
 
-### Limitations
-
-- If redirection(s) change the domain, spoofing features will be lost
-
 ## Usage
 
-See `./xd.rb --help`
+`alias xd='./xd.rb'`
+
+To see all parameters:
+`xd --help`
 
 ## Examples
 
-TODO
+Simple domain check on default host (not using config):
+`xd www.ibm.com`
+
+Check an URL (not using config):
+`xd https://www.ibm.com/hello`
+
+You can also use name/aliases from config file:
+`xd adobe ibm`
+
+Chain as many as you want. You can also mix elements from the config file and
+URLs/domains.
+
+Finally, if you want to list all domains in config just do:
+`xd`
+
+And to check all of them:
+`xd --all`
 
 ## Config file
 
-TODO syntax
+Example of simple config file:
+
+```json
+{
+	"domains": [
+		{
+			"alias": "adobe",
+			"name": "www.adobe.com",
+			"content": "Creative, marketing and document management solutions",
+			"hosts": [
+				"test.edgekey-staging.net",
+				"test.edgekey.net"
+			]
+		},
+		{
+			"alias": "ibm",
+			"name": "www.ibm.com",
+			"content": "IBM Corp. 2016",
+			"ssl": true
+		},
+		{
+			"alias": "kodak",
+			"name": "www.kodak.com"
+		},
+		{
+			"alias": "kayak",
+			"name": "www.kayak.com"
+		},
+		{"name": "www.zendesk.com"}
+	]
+}
+
+```
+
+Default place for the config file is $HOME/.xd.json
 
 ## TODO
 

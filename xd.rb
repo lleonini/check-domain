@@ -512,7 +512,7 @@ end
 def pretty_curl_p(cur)
 	o = ''
 	if cur.key?('error')
-		return o + cur['error'].s('error') + "\n\n"
+		return o + cur['error'].s('error') + "\n"
 	end
 	http_code = cur['stats']['http_code'].to_i
 	if http_code >= 200 and http_code < 300
@@ -577,7 +577,7 @@ def indent(level, s)
 	l = 0
 	i = ''
 	while l < level
-		i +=  '  '
+		i +=  '   '
 		l += 1
 	end
 	o = ''
@@ -603,7 +603,7 @@ end
 
 def find_config(data, d)
 	data['domains'].each do |domain|
-		if (!d or domain['name'] == d or domain['alias'] == d) and domain['hosts']
+		if (!d or domain['name'] == d or domain['alias'] == d)
 			return domain
 		end
 	end
@@ -630,13 +630,14 @@ opts = Trollop::options do
   opt :config, 'Alternate config file', :type => :string, :default => ENV['HOME'] + '/.xd.json'
   opt :content, 'Check specific content', :type => :string
   opt :host, 'Host/IP of the vhost (only if no config)', :type => :string
-  opt :ssl, 'Force SSL'
-  opt :nossl, 'Force without SSL'
+  opt :ssl, 'Force all checks with SSL'
+  opt :nossl, 'Force all checks without SSL'
   opt :headers, 'Show all headers'
   opt :stats, 'Show curl additional statistics'
-  opt :commands, 'Show raw command'
-  opt :debug, 'Show raw commands and outputs'
-	opt :color, 'Force color output'
+  opt :commands, 'Show raw commands'
+  opt :debug, 'Show raw commands and their outputs'
+	opt :colors, 'Force colors output'
+	opt :nocolors, 'Remove colors'
   opt :timeout, 'Timeout (curl)', :type => :int, :default => 30
 end
 
@@ -653,33 +654,42 @@ $headers = opts[:headers]
 $stats = opts[:stats]
 $commands = opts[:commands]
 $debug = opts[:debug]
-if opts[:color] then Rainbow.enabled = true end
+if opts[:colors] then Rainbow.enabled = true end
+if opts[:nocolors] then Rainbow.enabled = false end
 $timeout = opts[:timeout]
 $urls = ARGV
 
-begin
-	$data = JSON.parse(File.read($config))
-rescue
-	#puts "Config file not found: #{$config}"
-	$data = {'domains' => []}
+$data = {'domains' => []}
+if File.exists?($config)
+	begin
+		$data = JSON.parse(File.read($config))
+	rescue
+		puts "Broken config file: #{$config}"
+		exit
+	end
 end
 
 if !$urls then puts $version + "\n\nTry --help for help.\n\n" end
 if $list or (!$all and $urls.size == 0)
-	puts "Domains in current config (#{$config}):\n\n"
+	o = "Domains in config (#{$config}):\n\n"
 	$data['domains'].each do |domain|
 		if domain['alias']
-			puts "#{domain['alias'].s('config.alias')} - #{domain['name'].s('config.domain')}:"
+			o += "#{domain['alias'].s('config.alias')} - #{domain['name'].s('config.domain')}"
 		else
-			puts domain['name'].s('config.alias')
+			o += domain['name'].s('config.alias')
 		end
 		if domain['hosts']
+			o += ":\n"
+			i = ''
 			domain['hosts'].each do |host|
-				puts "\t#{host}"
+				i += "#{host}\n"
 			end
+			o += indent(1, i)
+		else
+			o += "\n"
 		end
 	end
-	puts
+	puts o
 	exit
 end
 
@@ -697,6 +707,9 @@ $urls.each do |url|
 			uri = URI(url)
 			domain['name'] = uri.host
 			domain['path'] = uri.path
+			if uri.user and uri.password
+				domain['auth'] = uri.user + ':' + uri.password
+			end
 			if uri.scheme == 'https'
 				domain['ssl'] = true
 			end

@@ -1,0 +1,28 @@
+{
+	"domains": [
+		{
+			"alias": "adobe",
+			"name": "www.adobe.com",
+			"content": "Creative, marketing and document management solutions",
+			"hosts": [
+				"test.edgekey-staging.net",
+				"test.edgekey.net"
+			]
+		},
+		{
+			"alias": "ibm",
+			"name": "www.ibm.com",
+			"content": "IBM Corp. 2016",
+			"ssl": true
+		},
+		{
+			"alias": "kodak",
+			"name": "www.kodak.com"
+		},
+		{
+			"alias": "kayak",
+			"name": "www.kayak.com"
+		},
+		{"name": "www.zendesk.com"}
+	]
+}
