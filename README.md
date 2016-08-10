@@ -39,26 +39,32 @@ them to suit particular needs.
 `alias xd='./xd.rb'`
 
 To see all parameters:
+
 `xd --help`
 
 ## Examples
 
 Simple domain check on default host (not using config):
+
 `xd www.ibm.com`
 
 Check an URL (not using config):
+
 `xd https://www.ibm.com/hello`
 
 You can also use name/aliases from config file:
+
 `xd adobe ibm`
 
 Chain as many as you want. You can also mix elements from the config file and
 URLs/domains.
 
 Finally, if you want to list all domains in config just do:
+
 `xd`
 
 And to check all of them:
+
 `xd --all`
 
 ## Config file
