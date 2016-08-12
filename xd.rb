@@ -58,7 +58,7 @@ class String
 		when 'url.https'
 			Rainbow(self).color('#66bb66')
 		when 'url.host'
-			Rainbow(self).white
+			Rainbow(self)
 		when 'url.path'
 			Rainbow(self).color('#66bbbb')
 		when 'curl.stats'
@@ -108,6 +108,24 @@ def exec(command)
 	if $commands or $debug then puts command.s('command') + "\n\n" end
 	if $debug then puts o.s('debug') end
 	return o
+end
+
+# https://stackoverflow.com/questions/10262235/printing-an-ascii-spinning-cursor-in-the-console
+def show_wait_spinner(fps = 10)
+	chars = %w[| / - \\]
+	delay = 1.0 / fps
+	iter = 0
+	spinner = Thread.new do
+		while iter do  # Keep spinning until told otherwise
+			print chars[(iter += 1) % chars.length]
+			sleep delay
+ 			print "\b"
+		end
+	end
+	yield.tap {       # After yielding to the block, save the return value
+		iter = false   # Tell the thread to exit, cleaning up after itself…
+		spinner.join   # …and wait for it to do so.
+	}                # Use the block's return value as the method's
 end
 
 def format_host(host, name)
@@ -644,6 +662,7 @@ end
 $list = opts[:list]
 $auth = opts[:auth]
 $agent = opts[:agent]
+if !$agent then $agent = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36" end
 $all = opts[:all]
 $config = opts[:config]
 $content = opts[:content]
@@ -674,19 +693,16 @@ if $list or (!$all and $urls.size == 0)
 	o = "Domains in config (#{$config}):\n\n"
 	$data['domains'].each do |domain|
 		if domain['alias']
-			o += "#{domain['alias'].s('config.alias')} - #{domain['name'].s('config.domain')}"
+			o += "#{domain['alias'].s('config.alias')} - #{domain['name'].s('config.domain')}\n"
 		else
-			o += domain['name'].s('config.alias')
+			o += domain['name'].s('config.alias') + "\n"
 		end
 		if domain['hosts']
-			o += ":\n"
 			i = ''
 			domain['hosts'].each do |host|
 				i += "#{host}\n"
 			end
 			o += indent(1, i)
-		else
-			o += "\n"
 		end
 	end
 	puts o
@@ -731,7 +747,11 @@ $threads = []
 $to_analyze.each do |domain|
 	$threads << Thread.new { $results[domain] = analyze_domain(domain) }
 end
-$threads.each { |thr| thr.join }
+
+print 'Checking...'
+show_wait_spinner{ $threads.each { |thr| thr.join } }
+print "\r              \r"
+
 $to_analyze.each do |domain|
 	if $results[domain]
 		puts $results[domain]
