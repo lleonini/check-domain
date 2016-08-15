@@ -61,6 +61,8 @@ class String
 			Rainbow(self)
 		when 'url.path'
 			Rainbow(self).color('#66bbbb')
+		when 'url.query'
+			Rainbow(self).color('#66bb66')
 		when 'curl.stats'
 			Rainbow(self).color(:orange)
 		when 'curl.http.ok'
@@ -198,7 +200,7 @@ def analyze_domain(domain)
 					if $content then content = $content end
 					if content
 						out += indent(2, 'Content: ')
-						if o[0]['content'] =~ /([^\n]{,25})#{content}([^\n]{,25})/
+						if o[0]['content'] =~ /([^\n\r]{,25})#{content}([^\n\r]{,25})/
 							out += indent(3, "...#{$1}".s('content') + content.s('content.found') + "#{$2}...".s('content'))
 						else
 							out += indent(3, ('Not found: ' + content).s('content.notfound'))
@@ -404,7 +406,8 @@ end
 # recursive curl
 def r_curl(host, ip, url, auth = nil)
 	akamai_headers = 
-		'Pragma:akamai-x-cache-on,akamai-x-cache-remote-on,akamai-x-check-cacheable,' +
+		'Pragma:akamai-x-get-client-ip,akamai-x-feo-trace,akamai-x-get-request-id,' +
+		'akamai-x-cache-on,akamai-x-cache-remote-on,akamai-x-check-cacheable,' +
 		'akamai-x-get-cache-key,akamai-x-get-extracted-values,akamai-x-get-nonces,' +
 		'akamai-x-get-ssl-client-session-id,akamai-x-get-true-cache-key,akamai-x-serial-no'
 	# time_namelookup always = 0 because of resolve (and previous resolution)
@@ -414,7 +417,7 @@ def r_curl(host, ip, url, auth = nil)
 		(auth ? " -u \"#{auth}\" " : '') +
 		'--compressed -H "Accept-encoding: gzip,deflate" ' +
 		'-H "' + akamai_headers + '" ' +
-		'-w \'--STATS--\n' +
+		'-w \'\n--STATS--\n' +
 		'http_code: %{http_code}\n' +
 		'size_download: %{size_download}\n' +
 		'speed_download: %{speed_download}\n' +
@@ -449,17 +452,19 @@ end
 
 def parse_curl(url, s)
 	o = {'url' => url}
-	#if s =~ /http_code: 000/
-		# ERROR
-	#end
 	o['title'] = s.lines.first.strip
-	o['headers'] = {}
+	headers = {}
 	s.lines.each do |l|
 		l.strip!
 		parts = l.split(': ')
 		if parts.length > 1
-			o['headers'][parts[0].downcase] = parts[1]
+			if !headers.key?(parts[0].downcase) then headers[parts[0].downcase] = {} end
+			headers[parts[0].downcase][parts[1]] = true
 		elsif l == '' then break end
+	end
+	o['headers'] = {}
+	headers.each do |k, vs|
+		o['headers'][k] = vs.keys.join(' | ')
 	end
 	show = false
 	o['content'] = ''
@@ -506,6 +511,9 @@ def colorize_url(url)
 	end
 	if uri.path
 		o += uri.path.s('url.path')
+	end
+	if uri.query
+		o += ('?' + uri.query).s('url.query')
 	end
 	o
 end
@@ -723,6 +731,7 @@ $urls.each do |url|
 			uri = URI(url)
 			domain['name'] = uri.host
 			domain['path'] = uri.path
+			if uri.query then domain['path'] += '?' + uri.query end
 			if uri.user and uri.password
 				domain['auth'] = uri.user + ':' + uri.password
 			end
@@ -748,9 +757,13 @@ $to_analyze.each do |domain|
 	$threads << Thread.new { $results[domain] = analyze_domain(domain) }
 end
 
-print 'Checking...'
-show_wait_spinner{ $threads.each { |thr| thr.join } }
-print "\r              \r"
+if !$commands and !$debug
+	print 'Checking...'
+	show_wait_spinner{ $threads.each { |thr| thr.join } }
+	print "\r              \r"
+else
+	$threads.each { |thr| thr.join }
+end
 
 $to_analyze.each do |domain|
 	if $results[domain]
