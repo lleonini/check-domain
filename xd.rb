@@ -5,6 +5,7 @@ require 'net/http'
 require 'ipaddress'
 require 'trollop'
 require 'rainbow'
+require 'filesize'
 
 # Colors
 class String
@@ -406,17 +407,18 @@ end
 # recursive curl
 def r_curl(host, ip, url, auth = nil)
 	akamai_headers = 
-		'Pragma:akamai-x-get-client-ip,akamai-x-feo-trace,akamai-x-get-request-id,' +
+		' -H "Pragma:akamai-x-get-client-ip,akamai-x-feo-trace,akamai-x-get-request-id,' +
+		'akamai-x-request-trace,akamai-x--meta-trace,akama-xi-get-extracted-values,' +
 		'akamai-x-cache-on,akamai-x-cache-remote-on,akamai-x-check-cacheable,' +
 		'akamai-x-get-cache-key,akamai-x-get-extracted-values,akamai-x-get-nonces,' +
-		'akamai-x-get-ssl-client-session-id,akamai-x-get-true-cache-key,akamai-x-serial-no'
+		'akamai-x-get-ssl-client-session-id,akamai-x-get-true-cache-key,akamai-x-serial-no" '
 	# time_namelookup always = 0 because of resolve (and previous resolution)
 	o = exec(
 		'curl -sSi --connect-timeout ' + $timeout.to_s + ' -m ' + ($timeout + 10).to_s + ' ' +
 		($agent ? " -A \"#{$agent}\" " : '') +
 		(auth ? " -u \"#{auth}\" " : '') +
 		'--compressed -H "Accept-encoding: gzip,deflate" ' +
-		'-H "' + akamai_headers + '" ' +
+		+ akamai_headers +
 		'-w \'\n--STATS--\n' +
 		'http_code: %{http_code}\n' +
 		'size_download: %{size_download}\n' +
@@ -565,10 +567,9 @@ def pretty_curl_p(cur)
 			if cur['headers']['content-type']
 				c += cur['headers']['content-type']
 				if cur['headers']['content-length']
-					c += ', length: ' + cur['headers']['content-length'].s('curl.info')
-				else
-					# Transfer-Encoding: chunked
-					c += ', length: ' + cur['stats']['size_download'].s('curl.info') + ' (chunked)'
+					c += ', ' + Filesize.from(cur['headers']['content-length'] + ' B').pretty.s('curl.info')
+				else # Transfer-Encoding: chunked
+					c += ', ' + Filesize.from(cur['stats']['size_download'] + ' B').pretty.s('curl.info') + ' (chunked)'
 				end
 				if cur['headers']['content-encoding']
 					c += ', ' + cur['headers']['content-encoding'].s('curl.ok')
@@ -649,18 +650,18 @@ EOS
 opts = Trollop::options do
   version $version
   banner $banner
-  opt :list, 'List all domains in config (default)'
+  opt :list, 'List all domains in config', :short => '-l'
   opt :auth, 'HTTP Basic Authentication "user:password"', :type => :string
   opt :agent, 'Alternate user agent', :type => :string
   opt :all, 'Check all domains in config'
-  opt :config, 'Alternate config file', :type => :string, :default => ENV['HOME'] + '/.xd.json'
+  opt :config, 'Alternate config file', :short => '-c', :type => :string, :default => ENV['HOME'] + '/.xd.json'
   opt :content, 'Check specific content', :type => :string
-  opt :host, 'Host/IP of the vhost (only if no config)', :type => :string
+  opt :host, 'Host/IP of the vhost (only if no config)', :short => '-H', :type => :string
   opt :ssl, 'Force all checks with SSL'
   opt :nossl, 'Force all checks without SSL'
-  opt :headers, 'Show all headers'
+  opt :headers, 'Show all headers', :short => '-h'
   opt :stats, 'Show curl additional statistics'
-  opt :commands, 'Show raw commands'
+  opt :commands, 'Show raw commands', :short => '-v'
   opt :debug, 'Show raw commands and their outputs'
 	opt :colors, 'Force colors output'
 	opt :nocolors, 'Remove colors'

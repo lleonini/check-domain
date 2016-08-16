@@ -23,7 +23,8 @@ them to suit particular needs.
 	- HTTP response code
 	-	Server
 	-	Redirections
-	-	Content: length, encoding, compression
+	- Headers
+	-	Content consolidation: length, encoding, compression
 - CDN:
   - Detection of AKAMAI, CloudFront, CloudFlare, MaxCDN and Fastly
 	- AKAMAI: debug headers, staging and production networks
@@ -103,7 +104,7 @@ Example of simple config file:
 
 ```
 
-Default place for the config file is $HOME/.xd.json
+Default config file location: $HOME/.xd.json
 
 ## TODO
 
