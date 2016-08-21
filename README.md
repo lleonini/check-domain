@@ -18,7 +18,7 @@ them to suit particular needs.
 
 - Integrated host spoofing (no /etc/host dependency)
 - Highlight:
-	-	IPs
+	-	IPs (public / local)
 	-	CNAME
 	- HTTP response code
 	-	Server
@@ -28,16 +28,16 @@ them to suit particular needs.
 	-	Content consolidation: length, encoding, compression
 - CDN:
   - Detection of AKAMAI, CloudFront, CloudFlare, MaxCDN and Fastly
-	AKAMAI:
+	- AKAMAI:
 		- Debug headers
 		- Staging and production networks
 		- Show error reference
-- Support mutiple hosts for one domain (in config file)
 - SSL certificates checking
-- Parallel command execution for faster results
 - Performance indicators:
 	- Total time
 	- Download speed
+- Support mutiple hosts for one domain (in config file)
+- Parallel command execution for faster results
 - Use `curl`, `host` and `openssl` behind the scene
 
 ## Usage
