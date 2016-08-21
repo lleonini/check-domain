@@ -169,7 +169,7 @@ module CheckDomain using NewString
 
 	def self.format_host(host, name)
 		ip = public_ip(host)
-		return " #{host} domain not existing ? ".s('error') if !ip
+		return "#{host} domain not existing ?".b('error') if !ip
 		if host != name
 			if ip != host
 				o = "#{host} (#{ip})".b('host.h')
@@ -195,7 +195,7 @@ module CheckDomain using NewString
 			o += ' CDN: ' + label if label != ''
 			return o
 		else
-			return o + ' - ' + ' domain not existing ? '.s('error')
+			return o + ' - ' + 'domain not existing ?'.b('error')
 		end
 	end
 
@@ -252,7 +252,7 @@ module CheckDomain using NewString
 						out += indent(2, 'SSL: ' + ssl(ip, last_uri.host)) + "\n"
 					end
 				else
-					out += indent(1, " #{host} not found ".s('error') + "\n\n")
+					out += indent(1, "#{host} not found".b('error') + "\n\n")
 				end
 				t_out[host] = out
 			}
@@ -653,7 +653,7 @@ module CheckDomain using NewString
 				end
 			end
 		end
-		o.lines[0].gsub("\n", '').s('error')
+		o.lines[0].gsub("\n", '').b('error')
 	end
 
 	def self.find_config(data, d)
@@ -829,7 +829,7 @@ Where [options] are:
 			puts "\nChecks from ".s('intro') + ip.s('intro.value') + ' ' +
 				'Agent: '.s('intro') + "#{options['agent']} ".s('intro.value') + "\n\n"
 		else
-			puts "\nCannot get public IP. Are you connected to internet ?".s('error') + "\n\n"
+			puts "\n" + 'Cannot get public IP. Are you connected to internet ?'.b('error') + "\n\n"
 			exit
 		end
 
