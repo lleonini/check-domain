@@ -11,7 +11,7 @@ them to suit particular needs.
 
 ## Install
 
-- Packages: ruby 1.8+, curl 7.19+, openssl
+- Packages: ruby 1.8+, curl 7.19+, openssl 0.9.8+
 - bundle install 
 
 ## Features
@@ -22,26 +22,27 @@ them to suit particular needs.
 	-	CNAME
 	- HTTP response code
 	-	Server
-	-	Redirections
 	- Headers
+	-	Redirections
+	-	HSTS
 	-	Content consolidation: length, encoding, compression
 - CDN:
   - Detection of AKAMAI, CloudFront, CloudFlare, MaxCDN and Fastly
-	- AKAMAI: debug headers, staging and production networks
-- Support mutiple vhosts for one domain (in config file)
+	AKAMAI:
+		- Debug headers
+		- Staging and production networks
+		- Show error reference
+- Support mutiple hosts for one domain (in config file)
 - SSL certificates checking
 - Parallel command execution for faster results
-- Performance indicators
-- Behavior independent of HSTS settings
+- Performance indicators:
+	- Total time
+	- Download speed
 - Use `curl`, `host` and `openssl` behind the scene
 
 ## Usage
 
 `alias xd='./xd.rb'`
-
-To see all parameters:
-
-`xd --help`
 
 ## Examples
 
@@ -62,7 +63,7 @@ URLs/domains.
 
 Finally, if you want to list all domains in config just do:
 
-`xd`
+`xd -l`
 
 And to check all of them:
 
@@ -85,7 +86,7 @@ Example of simple config file:
 			]
 		},
 		{
-			"alias": "ibm",
+			"alias": "ibm bigblue",
 			"name": "www.ibm.com",
 			"content": "IBM Corp. 2016",
 			"ssl": true
@@ -105,8 +106,3 @@ Example of simple config file:
 ```
 
 Default config file location: $HOME/.xd.json
-
-## TODO
-
-- Show HTTP/2 infos
-- Support IPv6

@@ -1,18 +1,22 @@
 GEM
   remote: https://rubygems.org/
   specs:
-    colorize (0.8.1)
+    filesize (0.1.1)
+    htmlentities (4.3.4)
     ipaddress (0.8.3)
     json (2.0.2)
+    rainbow (2.1.0)
     trollop (2.1.2)
 
 PLATFORMS
   ruby
 
 DEPENDENCIES
-  colorize
+  filesize
+  htmlentities
   ipaddress
   json
+  rainbow
   trollop
 
 BUNDLED WITH
