@@ -83,9 +83,9 @@ module NewString
 			when 'curl.http.error'
 				Rainbow(self).color(light_red)
 			when 'curl.header'
-				Rainbow(self).color('#00aa00')
+				Rainbow(self).color('#666666')
 			when 'curl.header.value'
-				Rainbow(self).color('#cccccc')
+				Rainbow(self).color('#00aa00')
 			when 'curl.info'
 				Rainbow(self).color('#ffff66')
 			when 'curl.speed'
@@ -593,7 +593,7 @@ module CheckDomain using NewString
 		else
 			if cur['headers']['server']
 				o += 'Server'.s('curl.header') + ': ' + cur['headers']['server'].s('curl.header.value')
-				o += ' (' + cur['headers']['via'] + ')' if cur['headers']['via']
+				o += ' (via ' + cur['headers']['via'] + ')' if cur['headers']['via']
 				o += "\n"
 			end
 			if cur['stats']['http_code'] == '200'
