@@ -11,8 +11,8 @@ them to suit particular needs.
 
 ## Install
 
-- Packages: ruby 1.8+, curl 7.19+, openssl 0.9.8+
-- bundle install 
+- Packages: ruby 1.8+, curl 7.19+
+- bundle install
 
 ## Features
 
@@ -24,7 +24,7 @@ them to suit particular needs.
 	-	Server
 	- Headers
 	-	Redirections
-	-	HSTS
+	-	SSL, HSTS
 	-	Content consolidation: length, encoding, compression
 - CDN:
   - Detection of AKAMAI, CloudFront, CloudFlare, MaxCDN and Fastly
@@ -38,7 +38,6 @@ them to suit particular needs.
 	- Download speed
 - Support mutiple hosts for one domain (in config file)
 - Parallel command execution for faster results
-- Use `curl`, `host` and `openssl` behind the scene
 
 ## Usage
 

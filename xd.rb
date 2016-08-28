@@ -8,6 +8,7 @@ require 'trollop'
 require 'rainbow'
 require 'filesize'
 require 'htmlentities'
+require 'tempfile'
 
 VERSION = '1.0'
 
@@ -67,11 +68,11 @@ module NewString
 			when 'url.http'
 				Rainbow(self)
 			when 'url.https'
-				Rainbow(self).color('#66bb66')
+				Rainbow(self)
 			when 'url.host'
 				Rainbow(self)
 			when 'url.path'
-				Rainbow(self).color('#66bbbb')
+				Rainbow(self).color('#999999')
 			when 'url.query'
 				Rainbow(self).color('#66bb66')
 			when 'curl.stats'
@@ -85,7 +86,11 @@ module NewString
 			when 'curl.header'
 				Rainbow(self).color('#666666')
 			when 'curl.header.value'
-				Rainbow(self).color('#00aa00')
+				Rainbow(self).color('#999999')
+			when 'curl.ssl.cert'
+				Rainbow(self).color(light_green)
+			when 'curl.ssl.issuer'
+				Rainbow(self).color('#999999')
 			when 'curl.info'
 				Rainbow(self).color('#ffff66')
 			when 'curl.speed'
@@ -107,10 +112,6 @@ module NewString
 			when 'content.found'
 				Rainbow(self).color(light_green)
 			when 'content.notfound'
-				Rainbow(self).color(light_red)
-			when 'ssl.ok'
-				Rainbow(self).color(:green)
-			when 'ssl.error'
 				Rainbow(self).color(light_red)
 			when 'config.alias'
 				Rainbow(self).color(light_blue)
@@ -220,7 +221,6 @@ module CheckDomain using NewString
 			threads << Thread.new {
 				ip = public_ip(host)
 				out = ''
-
 				if ip
 					out += indent(1, format_host(host, name))
 					ssl = domain['ssl']
@@ -229,6 +229,7 @@ module CheckDomain using NewString
 					url = 'http' + (ssl ? 's' : '') + '://' + name + (domain['path'] or '')
 					curl_options = options.clone
 					curl_options['user'] ||= domain['user']
+					curl_options['cookie'] ||= domain['cookie']
 					o = r_curl(name, ip, url, curl_options)
 					out += indent(2, format_curl(o, options))
 					if o[0].key?('stats') and o[0]['stats']['http_code'] == '200'
@@ -236,30 +237,21 @@ module CheckDomain using NewString
 						content = options['content'] if options['content']
 						if content
 							if o[0]['content'] =~ /([^\n\r]{,25})#{content}([^\n\r]{,25})/
-								out += indent(2, 'Content: ' + "...#{$1}".s('content') + content.s('content.found') + "#{$2}...".s('content'))
+								out += indent(2, 'Check content: ' + "...#{$1}".s('content') + content.s('content.found') + "#{$2}...".s('content'))
 							else
-								out += indent(2, 'Content: ' + ('Not found: ' + content).s('content.notfound'))
+								out += indent(2, 'Check content: ' + ('Not found: ' + content).s('content.notfound'))
 							end
-							out += "\n"
 						end
 					end
-
-					last_uri = URI(o[0]['url'])
-					if ssl or last_uri.scheme == 'https'
-						# SSL can be broken (detected by curl above) and then shown in green
-						# here because a valid certificate is given (but not corresponding to
-						# the domain)
-						out += indent(2, 'SSL: ' + ssl(ip, last_uri.host)) + "\n"
-					end
 				else
-					out += indent(1, "#{host} not found".b('error') + "\n\n")
+					out += indent(1, "#{host} not found".b('error') + "\n")
 				end
 				t_out[host] = out
 			}
 		end
 		threads.each { |thr| thr.join }
-		out = format_domain(domain['name']) + "\n\n"
-		domain['hosts'].each { |host| out += t_out[host] }
+		out = "\n" + format_domain(domain['name']) + "\n"
+		domain['hosts'].each { |host| out += "\n" + t_out[host] }
 		out
 	end
 
@@ -439,11 +431,11 @@ module CheckDomain using NewString
 
 	# Recursive curl
 	def self.r_curl(host, ip, url, options)
-		cookies = ''
-		if options['cookies']
-			options['cookies'].each do |cookie|
-				cookies += " --cookie '#{cookie}'"
-			end
+		tmp_o = Tempfile.new('tmp_o')
+		# only one 'cookie' but can contains multiple key=val
+		cookie = ''
+		if options['cookie']
+			cookie += " --cookie '#{options['cookie']}'"
 		end
 		headers = ' --header "Accept-encoding: gzip,deflate"'
 		if options['headers']
@@ -452,7 +444,7 @@ module CheckDomain using NewString
 			end
 		end
 		akamai_headers = 
-			' --header "Pragma:akamai-x-get-client-ip,akamai-x-feo-trace,akamai-x-get-request-id,' +
+			' --header "Pragma: akamai-x-get-client-ip,akamai-x-feo-trace,akamai-x-get-request-id,' +
 			'akamai-x-request-trace,akamai-x--meta-trace,akama-xi-get-extracted-values,' +
 			'akamai-x-cache-on,akamai-x-cache-remote-on,akamai-x-check-cacheable,' +
 			'akamai-x-get-cache-key,akamai-x-get-extracted-values,akamai-x-get-nonces,' +
@@ -461,27 +453,28 @@ module CheckDomain using NewString
 		agent = options['agent'] ? " --user-agent \"#{options['agent']}\" " : ''
 		max_time = ' --connect-timeout ' + options['max-time'].to_s + ' -m ' + (options['max-time'] + 10).to_s
 
-		o = exec('curl -sSi --compressed' + cookies + headers +
+		o = exec('curl --compressed -sSv -o ' + tmp_o.path + cookie + headers +
 			user + agent + max_time + akamai_headers +
-			' -w \'\n--STATS--\n' +
-			'http_code: %{http_code}\n' +
-			'size_download: %{size_download}\n' +
-			'speed_download: %{speed_download}\n' +
-			'time_namelookup: %{time_namelookup}\n' +
-			'time_connect: %{time_connect}\n' +
-			'time_appconnect: %{time_appconnect}\n' +
-			'time_redirect: %{time_redirect}\n' +
-			'time_pretransfer: %{time_pretransfer}\n' +
-			'time_starttransfer: %{time_starttransfer}\n' +
-			'time_total: %{time_total}\n\' ' +
-			"--resolve #{host}:80:#{ip} --resolve #{host}:443:#{ip} '#{url}' 2>&1")
-
+			' -w \'\n' +
+			'! http_code: %{http_code}\n' +
+			'! size_download: %{size_download}\n' +
+			'! speed_download: %{speed_download}\n' +
+			'! time_namelookup: %{time_namelookup}\n' +
+			'! time_connect: %{time_connect}\n' +
+			'! time_appconnect: %{time_appconnect}\n' +
+			'! time_redirect: %{time_redirect}\n' +
+			'! time_pretransfer: %{time_pretransfer}\n' +
+			'! time_starttransfer: %{time_starttransfer}\n' +
+			'! time_total: %{time_total}\n\'' +
+			" --resolve #{host}:80:#{ip} --resolve #{host}:443:#{ip} '#{url}' 2>&1")
+		content = tmp_o.read; tmp_o.close; tmp_o.unlink
+		
 		# major error
 		# curl: (60) server certificate verification failed. CAfile: /etc/ssl/certs/ca-certificates.crt CRLfile: none
 		if o.lines.first =~ /^curl: \(/
 			[{'url' => url, 'error' => o.lines.first.chop}]
 		else
-			m = parse_curl(url, o)
+			m = parse_curl(url, o, content)
 			if m['headers']['location']
 				if m['headers']['location'] =~ URI::regexp
 					loc = m['headers']['location']
@@ -496,37 +489,71 @@ module CheckDomain using NewString
 		end
 	end
 
-	def self.parse_curl(url, s)
-		o = {'url' => url}
-		o['title'] = s.lines.first.strip
+	def self.parse_curl(url, s, content)
+		o = {
+			'url' => url,
+			'content' => content,
+			'md5' => Digest::MD5.hexdigest(content),
+			'request' => '',
+			'sent' => {},
+			'title' => '',
+			'headers' => {},
+			'stats' => {},
+			'ssl_check' => false,
+			'ssl' => {},
+			'error' => false
+		}
 		headers = {}
+		sent = {}
 		s.lines.each do |l|
 			l.strip!
-			parts = l.split(': ')
-			if parts.length > 1
-				n = parts[0].downcase
-				headers[n] = {} if !headers.key?(n)
-				headers[n][parts[1]] = true
-			elsif l == '' then break end
-		end
-		o['headers'] = {}
-		headers.each do |k, vs|
-			o['headers'][k] = vs.keys.join(' | ')
-		end
-		show = false
-		o['content'] = ''
-		o['stats'] = {}
-		s.lines.each do |l|
-			if show == false
-				if l.include? '--STATS--'
-					show = true
-				elsif
-					o['content'] += l
+			if l =~ /curl: (.*)/
+				o['error'] = $1
+			elsif l =~ /^< (.*)/
+				l = $1
+				if !l.include?(':')
+					o['title'] = l
+				else
+					parts = l.split(':', 2)
+					n = parts[0].downcase
+					headers[n] = {} if !headers.key?(n)
+					headers[n][(parts.length > 1) ? parts[1].strip : ''] = true
 				end
-			elsif
-				parts = l.strip.split(': ')
-				o['stats'][parts[0]] = parts[1] if parts.length > 1
+			elsif l =~ /^> (.*)/
+				l = $1
+				if !l.include?(':')
+					o['request'] = l
+				else
+					parts = l.split(':', 2)
+					n = parts[0].downcase
+					sent[n] = {} if !sent.key?(n)
+					sent[n][(parts.length > 1) ? parts[1].strip : ''] = true
+				end
+			elsif l =~ /^\* (.*)/
+				l = $1
+				if l =~ /^SSL connection using (.*)/
+					o['ssl']['type'] = $1
+				elsif l =~ /^\t (.*)/
+					l = $1
+					o['ssl_check'] = true if l == 'server certificate verification OK'
+					if !l.include?(':')
+						o['ssl'][l] = ''
+					else
+						parts = l.split(':', 2)
+						o['ssl'][parts[0]] = parts[1].strip
+					end
+				end
+			elsif l =~ /^\! (.*)/
+				l = $1
+				parts = l.strip.split(':')
+				o['stats'][parts[0]] = (parts.length > 1) ? parts[1].strip : ''
 			end
+		end
+		headers.each do |k, vs|
+			o['headers'][k] = vs.keys.join("\n")
+		end
+		sent.each do |k, vs|
+			o['sent'][k] = vs.keys.join("\n")
 		end
 		o
 	end
@@ -555,24 +582,30 @@ module CheckDomain using NewString
 			cur = co[i]
 			uri = URI(cur['url'])
 			o += format_url(cur['url'])
-			if !cur.key?('error')
+			if !cur['error']
 				o += (' - ' + cur['stats']['time_total'].to_f.round(2).to_s + "s").s('curl.info')
 				o += (' ' + Filesize.from(cur['stats']['speed_download'] + ' B').pretty + '/s').s('curl.speed') if cur['stats']['http_code'].to_i == 200
 				o += ' ' + 'SSL'.b('flag.ssl') if uri.scheme == 'https'
 				o += ' ' + 'HSTS'.b('flag.hsts') if cur['headers']['strict-transport-security']
 			end
 			o += "\n"
-			o += indent(1, _format_curl(cur, options))
-			#o += "\n"
+			o += indent(1, _format_curl(cur, options, i))
 			i -= 1
 		end
-		o += "\n"
+
+		if !cur['error'] and cur['ssl_check']
+			subject = cur['ssl']['subject'].gsub(',', ', ').gsub('=', ' = ')
+			issuer = cur['ssl']['issuer'].gsub(',', ', ').gsub('=', ' = ')
+			# WARNING: certificate can be valid and subject null ! (e.g. www.kayak.ch)
+			o += "SSL: " + ((subject != '') ? subject.s('curl.ssl.cert') : '') + "\n"
+			o += indent(1, 'Issuer'.s('curl.header') + ': ' + issuer.s('curl.ssl.issuer') + "\n")
+		end
 		o
 	end
 
-	def self._format_curl(cur, options)
+	def self._format_curl(cur, options, pos)
 		o = ''
-		return o + cur['error'].s('error') + "\n" if cur.key?('error')
+		return o + cur['error'].s('error') + "\n" if cur['error']
 		
 		http_code = cur['stats']['http_code'].to_i
 		if http_code >= 200 and http_code < 300
@@ -585,9 +618,17 @@ module CheckDomain using NewString
 		o += "\n"
 		
 		if options['show_headers']
+			o += "Headers:\n".s('curl.stats')
 			cur['headers'].sort.each do |col, v|
 				if cur['headers'][col] and col != 'content'
 					o += col.hd.s('curl.header') + ': ' + v.s('curl.header.value') + "\n"
+				end
+			end
+			if cur['ssl'].key?('type')
+				o += "SSL:\n".s('curl.stats')
+				cur['ssl'].each do |col, v|
+					o += col.s('curl.header') + ': ' + v.s('curl.header.value') + "\n" if v != ''
+					o += col.s('curl.header') + "\n" if v == ''
 				end
 			end
 		else
@@ -600,6 +641,9 @@ module CheckDomain using NewString
 				c = ''
 				if cur['headers']['content-type']
 					c += cur['headers']['content-type']
+					if options['show_md5']
+						c += ' (' + cur['md5'] + ')'
+					end
 					if cur['headers']['content-length']
 						c += ', ' + Filesize.from(cur['headers']['content-length'] + ' B').pretty.s('curl.info')
 					else # Transfer-Encoding: chunked
@@ -641,21 +685,6 @@ module CheckDomain using NewString
 		o
 	end
 
-	def self.ssl(ip, domain)
-		o = exec("openssl s_client -showcerts -servername #{domain} -connect #{ip}:443 2>&1 >/dev/null </dev/null")
-		ok = if o =~ /unable to/ or o =~ /verify error/ then false else true end
-		o.lines.each do |l|
-			if l =~ /depth=0/
-				if ok
-					return l.gsub("\n", '').s('ssl.ok')
-				else
-					return l.gsub("\n", '').s('ssl.error')
-				end
-			end
-		end
-		o.lines[0].gsub("\n", '').b('error')
-	end
-
 	def self.find_config(data, d)
 		data['domains'].each do |domain|
 			return domain if domain['name'] == d
@@ -695,7 +724,7 @@ module CheckDomain using NewString
 		end
 
 		if !@@commands and !@@debug
-			print 'Checking...'
+			print "\nChecking..."
 			show_wait_spinner { threads.each { |thr| thr.join } }
 			print "\r              \r"
 		else
@@ -718,7 +747,7 @@ module CheckDomain using NewString
 		urls.each do |url|
 			config = find_config(data, url)
 			if config
-				o += "'#{url}' found in config file\n".s('config.found')
+				o += "'#{url}' found in config file".s('config.found')
 				to_analyze.push(config)
 			else
 				domain = { 'name' => url }
@@ -760,15 +789,16 @@ Where [options] are:
 			opt :host, '<host>: host/IP of the vhost (only if no config)', :short => '-o', :type => :string
 			opt :ssl, 'Force all checks with SSL', :short => '-s'
 			opt :nossl, 'Force all checks without SSL', :short => '-n'
-			opt :headers, 'Show all headers', :short => '-i'
-			opt :stats, 'Show curl additional statistics', :short => '-t'
+			opt :headers, 'Show all headers and SSL details', :short => '-i'
+			opt :stats, 'Show curl statistics', :short => '-t'
+			opt :md5, 'Show content md5'
 			opt :commands, 'Show raw commands', :short => '-v'
 			opt :debug, 'Show raw commands and their outputs', :short => '-d'
 			opt :colors, 'Force colors output'
 			opt :nocolors, 'Remove colors'
 			opt :config, '<file>: alternate config file', :short => '-f', :type => :string, :default => ENV['HOME'] + '/.xd.json'
 			opt 'max-time', '<value>: curl timeout', :short => '-m', :type => :int, :default => 30
-			opt :cookie, '<name=data>: set cookie', :short => '-b', :type => :string, :multi => true
+			opt :cookie, '<name=data>: set cookie', :short => '-b', :type => :string
 			opt :header, '<header>: set header', :short => '-H', :type => :string, :multi => true
 		end
 
@@ -787,13 +817,14 @@ Where [options] are:
 			'user' => opts[:user],
 			'agent' => agent,
 			'content' => opts[:content],
-			'cookies' => opts[:cookie],
+			'cookie' => opts[:cookie],
 			'headers' => opts[:header],
 			'host' => opts[:host],
 			'ssl' => opts[:ssl],
 			'nossl' => opts[:nossl],
 			'show_headers' => opts[:headers],
 			'show_stats' => opts[:stats],
+			'show_md5' => opts[:md5],
 			'max-time' => opts['max-time'],
 		}
 		
@@ -827,16 +858,16 @@ Where [options] are:
 		ip = my_ip
 		if ip
 			puts "\nChecks from ".s('intro') + ip.s('intro.value') + ' ' +
-				'Agent: '.s('intro') + "#{options['agent']} ".s('intro.value') + "\n\n"
+				'Agent: '.s('intro') + "#{options['agent']} ".s('intro.value') + "\n"
 		else
-			puts "\n" + 'Cannot get public IP. Are you connected to internet ?'.b('error') + "\n\n"
+			puts "\n" + 'Cannot get public IP. Are you connected to internet ?'.b('error') + "\n"
 			exit
 		end
 
 		to_analyze, o  = find_to_analyze(data, urls, all)
 
 		puts o if o.length > 0
-		puts analyze(to_analyze, options)
+		puts analyze(to_analyze, options).lines.to_a[1..-1].join
 	end
 end
 
