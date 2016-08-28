@@ -855,19 +855,21 @@ Where [options] are:
 			exit
 		end
 		
-		ip = my_ip
-		if ip
-			puts "\nChecks from ".s('intro') + ip.s('intro.value') + ' ' +
-				'Agent: '.s('intro') + "#{options['agent']} ".s('intro.value') + "\n"
-		else
-			puts "\n" + 'Cannot get public IP. Are you connected to internet ?'.b('error') + "\n"
-			exit
-		end
-
 		to_analyze, o  = find_to_analyze(data, urls, all)
 
-		puts o if o.length > 0
-		puts analyze(to_analyze, options).lines.to_a[1..-1].join
+		if to_analyze.length > 0
+			ip = my_ip
+			if ip
+				puts "Checks from ".s('intro') + ip.s('intro.value') + ' ' +
+					'Agent: '.s('intro') + "#{options['agent']} ".s('intro.value') + "\n"
+			else
+				puts "\n" + 'Cannot get public IP. Are you connected to internet ?'.b('error') + "\n"
+				exit
+			end
+
+			puts o if o.length > 0
+			puts analyze(to_analyze, options).lines.to_a[1..-1].join
+		end
 	end
 end
 
