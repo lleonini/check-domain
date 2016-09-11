@@ -23,6 +23,8 @@
 			"alias": "kayak",
 			"name": "www.kayak.com"
 		},
-		{"name": "www.zendesk.com"}
+		{"name": "www.zendesk.com"},
+		{"name": "www.maxcdn.com"}
+		{"name": "www.cnn.com"}
 	]
 }

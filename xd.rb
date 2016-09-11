@@ -9,6 +9,7 @@ require 'rainbow'
 require 'filesize'
 require 'htmlentities'
 require 'tempfile'
+require 'openssl'
 
 VERSION = '1.0'
 
@@ -65,6 +66,8 @@ module NewString
 				Rainbow(self).color(light_blue)
 			when 'cdn.akamai.prod.label'
 				Rainbow(self).black.background(light_blue)
+			when 'cdn.akamai'
+				Rainbow(self).color(white_blue)
 			when 'url.http'
 				Rainbow(self)
 			when 'url.https'
@@ -493,7 +496,7 @@ module CheckDomain using NewString
 		o = {
 			'url' => url,
 			'content' => content,
-			'md5' => Digest::MD5.hexdigest(content),
+			'md5' => OpenSSL::Digest::MD5.hexdigest(content),
 			'request' => '',
 			'sent' => {},
 			'title' => '',
@@ -637,7 +640,58 @@ module CheckDomain using NewString
 				o += ' (via ' + cur['headers']['via'] + ')' if cur['headers']['via']
 				o += "\n"
 			end
+
 			if cur['stats']['http_code'] == '200'
+				
+				# CACHING
+				# Cache-Control: no-cache, must-revalidate // HTTP 1.1
+				# Pragma: no-cache // HTTP 1.0
+				c = nil
+				if cur['headers']['cache-control'] =~ /(.*no-cache.*)/ or cur['headers']['pragma'] =~ /(.*no-cache.*)/
+					c = $1
+				elsif cur['headers']['cache-control']
+					c = cur['headers']['cache-control'].s('curl.ok')
+				end
+				if c
+					comp = ''
+					if cur['headers']['expires']
+						if c =~ /max-age/
+							comp += ' (' + cur['headers']['expires'] + ')'
+						else
+							comp += ', Expires: ' + cur['headers']['expires']
+						end
+					end
+					comp += ', Etag: ' + cur['headers']['etag'] if cur['headers']['etag']
+					o += 'Caching'.s('curl.header') + ': ' + c + comp + "\n"
+				end
+				
+				# Akamai caching headers
+				# X-Cache: TCP_MISS from a173-222-109-135.deploy.akamaitechnologies.com (AkamaiGHost/8.1.0-17780724) (-)
+				# X-Cache-Key: S/D/1826/498887/000/xxx.domain.com/
+				# X-Cache-Remote: TCP_MISS from a2-20-143-103.deploy.akamaitechnologies.com (AkamaiGHost/8.1.0-17780724) (-)
+				# X-Check-Cacheable: NO
+				if cur['headers']['x-check-cacheable']
+					if cur['headers']['x-check-cacheable'] == 'YES'
+						ac = 'cachable'.s('curl.ok')
+						if cur['headers']['x-cache'] and cur['headers']['x-cache'] =~ /^([^ ]*) .*/
+							xc = $1
+						end
+						if cur['headers']['x-cache-remote'] and cur['headers']['x-cache-remote'] =~ /^([^ ]*) .*/
+							xcr = $1
+						end
+						acc = nil
+						if xc
+							acc = xc
+							acc += '/' + xcr if xcr and xcr != xc
+						end
+						ac += ', ' + acc if acc
+					else
+						ac = 'not cachable'.s('curl.info')
+					end
+					o += 'AKAMAI'.s('cdn.akamai') + ': ' + ac + "\n"
+				end
+			
+				# CONTENT
 				c = ''
 				if cur['headers']['content-type']
 					c += cur['headers']['content-type']
@@ -657,6 +711,7 @@ module CheckDomain using NewString
 				end
 				o += 'Content'.s('curl.header') + ': ' + c.s('curl.header.value') + "\n" if c != ''
 			end
+			
 		end
 		if options['show_stats']
 			o += "Stats:\n".s('curl.stats')
@@ -855,22 +910,24 @@ Where [options] are:
 			exit
 		end
 		
+		ip = my_ip
+		if ip
+			puts "\nChecks from ".s('intro') + ip.s('intro.value') + ' ' +
+				'Agent: '.s('intro') + "#{options['agent']} ".s('intro.value') + "\n"
+		else
+			puts "\n" + 'Cannot get public IP. Are you connected to internet ?'.b('error') + "\n"
+			exit
+		end
+
 		to_analyze, o  = find_to_analyze(data, urls, all)
 
-		if to_analyze.length > 0
-			ip = my_ip
-			if ip
-				puts "Checks from ".s('intro') + ip.s('intro.value') + ' ' +
-					'Agent: '.s('intro') + "#{options['agent']} ".s('intro.value') + "\n"
-			else
-				puts "\n" + 'Cannot get public IP. Are you connected to internet ?'.b('error') + "\n"
-				exit
-			end
-
-			puts o if o.length > 0
-			puts analyze(to_analyze, options).lines.to_a[1..-1].join
-		end
+		puts o if o.length > 0
+		puts analyze(to_analyze, options).lines.to_a[1..-1].join
 	end
 end
 
-CheckDomain.run
+begin
+	CheckDomain.run
+rescue SystemExit, Interrupt
+	puts "\nquit"
+end

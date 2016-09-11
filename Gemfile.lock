@@ -17,7 +17,7 @@ DEPENDENCIES
   ipaddress
   json
   rainbow
-  trollop
+  trollop (>= 2.1.2)
 
 BUNDLED WITH
-   1.11.2
+   1.12.5

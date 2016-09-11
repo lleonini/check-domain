@@ -26,12 +26,14 @@ them to suit particular needs.
 	-	Redirections
 	-	SSL, HSTS
 	-	Content consolidation: length, encoding, compression
+	-	Caching consolidation
 - CDN:
   - Detection of AKAMAI, CloudFront, CloudFlare, MaxCDN and Fastly
 	- AKAMAI:
 		- Debug headers
 		- Staging and production networks
-		- Show error reference
+		- Error reference number
+		- Caching information
 - SSL certificates checking
 - Performance indicators:
 	- Total time
