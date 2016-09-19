@@ -38,6 +38,8 @@ module NewString
 				Rainbow(self).color(white_blue)
 			when 'error'
 				Rainbow(self).white.background(:red)
+			when 'warning'
+				Rainbow(self).black.background(:orange)
 			when 'command'
 				Rainbow(self).black.background(:white)
 			when 'debug'
@@ -433,7 +435,7 @@ module CheckDomain using NewString
 	end
 
 	# Recursive curl
-	def self.r_curl(host, ip, url, options)
+	def self.r_curl(host, ip, url, options, count = 1)
 		tmp_o = Tempfile.new('tmp_o')
 		# only one 'cookie' but can contains multiple key=val
 		cookie = ''
@@ -471,6 +473,7 @@ module CheckDomain using NewString
 			'! time_total: %{time_total}\n\'' +
 			" --resolve #{host}:80:#{ip} --resolve #{host}:443:#{ip} '#{url}' 2>&1")
 		content = tmp_o.read; tmp_o.close; tmp_o.unlink
+		content = content.encode('UTF-16be', :invalid => :replace, :replace => '?').encode('UTF-8')
 		
 		# major error
 		# curl: (60) server certificate verification failed. CAfile: /etc/ssl/certs/ca-certificates.crt CRLfile: none
@@ -485,7 +488,16 @@ module CheckDomain using NewString
 					uri = URI(url)
 					loc = uri.scheme + '://' + uri.host + m['headers']['location']
 				end
-				return r_curl(host, ip, loc, options).push(m)
+				if url == loc
+					m['warning'] = 'Infinite redirect loop'
+					return [m]
+				else
+					if count > 6
+						return [m]
+					else
+						return r_curl(host, ip, loc, options, count + 1).push(m)
+					end
+				end
 			else
 				return [m]
 			end
@@ -504,7 +516,8 @@ module CheckDomain using NewString
 			'stats' => {},
 			'ssl_check' => false,
 			'ssl' => {},
-			'error' => false
+			'error' => false,
+			'warning' => false
 		}
 		headers = {}
 		sent = {}
@@ -608,7 +621,8 @@ module CheckDomain using NewString
 
 	def self._format_curl(cur, options, pos)
 		o = ''
-		return o + cur['error'].s('error') + "\n" if cur['error']
+		return o + cur['error'].b('error') + "\n" if cur['error']
+		o += cur['warning'].b('warning') + "\n" if cur['warning']
 		
 		http_code = cur['stats']['http_code'].to_i
 		if http_code >= 200 and http_code < 300
@@ -722,7 +736,7 @@ module CheckDomain using NewString
 		# Akamai error
 		# Reference&#32;&#35;9&#46;876ddead&#46;1471509839&#46;12baa122
 		if cur['headers']['server'] == 'AkamaiGHost' and cur['content'] =~ /^Reference&#32;&#35;(.*)$/
-			o += 'Akamai reference'.s('akamai.ref') + ': ' + HTMLEntities.new.decode($1).s('akamai.ref.value') + "\n"
+			o += 'AKAMAI'.s('cdn.akamai') + ': ' + HTMLEntities.new.decode($1).s('akamai.ref.value') + "\n"
 		end
 		o
 	end
@@ -802,7 +816,7 @@ module CheckDomain using NewString
 		urls.each do |url|
 			config = find_config(data, url)
 			if config
-				o += "'#{url}' found in config file".s('config.found')
+				o += "\n'#{url}' found in config file".s('config.found')
 				to_analyze.push(config)
 			else
 				domain = { 'name' => url }
@@ -913,21 +927,21 @@ Where [options] are:
 		ip = my_ip
 		if ip
 			puts "\nChecks from ".s('intro') + ip.s('intro.value') + ' ' +
-				'Agent: '.s('intro') + "#{options['agent']} ".s('intro.value') + "\n"
+				'Agent: '.s('intro') + "#{options['agent']} ".s('intro.value')
 		else
-			puts "\n" + 'Cannot get public IP. Are you connected to internet ?'.b('error') + "\n"
+			puts "\n" + 'Cannot get public IP. Are you connected to internet ?'.b('error')
 			exit
 		end
 
 		to_analyze, o  = find_to_analyze(data, urls, all)
 
 		puts o if o.length > 0
-		puts analyze(to_analyze, options).lines.to_a[1..-1].join
+		puts analyze(to_analyze, options).lines.to_a[1..-1].join if to_analyze.length > 0
 	end
 end
 
 begin
 	CheckDomain.run
-rescue SystemExit, Interrupt
+rescue Interrupt
 	puts "\nquit"
 end
