@@ -23,7 +23,7 @@ them to suit particular needs.
 	- HTTP response code
 	-	Server
 	- Headers
-	-	Redirections
+	-	Redirections (loop detection)
 	-	SSL, HSTS
 	-	Content consolidation: length, encoding, compression
 	-	Caching consolidation

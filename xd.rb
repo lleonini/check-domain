@@ -206,12 +206,14 @@ module CheckDomain using NewString
 	end
 
 	def self.sanitize_domain(domain, options)
+		domain['spoof'] = true
 		# Set a default host if none in config
 		if !domain['hosts']
 			if options['host']
 				domain['hosts'] = [options['host']]
 			else
 				domain['hosts'] = [domain['name']]
+				domain['spoof'] = false
 			end
 		end
 		domain
@@ -236,6 +238,7 @@ module CheckDomain using NewString
 					curl_options['user'] ||= domain['user']
 					curl_options['cookie'] ||= domain['cookie']
 					o = r_curl(name, ip, url, curl_options)
+					o = detect_host_change(o) if domain['spoof']
 					out += indent(2, format_curl(o, options))
 					if o[0].key?('stats') and o[0]['stats']['http_code'] == '200'
 						content = domain['content']
@@ -442,7 +445,7 @@ module CheckDomain using NewString
 		if options['cookie']
 			cookie += " --cookie '#{options['cookie']}'"
 		end
-		headers = ' --header "Accept-encoding: gzip,deflate"'
+		headers = ' --header "Accept-Encoding: gzip,deflate"'
 		if options['headers']
 			options['headers'].each do |header|
 				headers += " --header '#{header}'"
@@ -454,12 +457,11 @@ module CheckDomain using NewString
 			'akamai-x-cache-on,akamai-x-cache-remote-on,akamai-x-check-cacheable,' +
 			'akamai-x-get-cache-key,akamai-x-get-extracted-values,akamai-x-get-nonces,' +
 			'akamai-x-get-ssl-client-session-id,akamai-x-get-true-cache-key,akamai-x-serial-no"'
-		user = options['user'] ? " --user \"#{options['user']}\" " : ''
-		agent = options['agent'] ? " --user-agent \"#{options['agent']}\" " : ''
+		user = options['user'] ? " --user \"#{options['user']}\"" : ''
+		agent = options['agent'] ? " --user-agent \"#{options['agent']}\"" : ''
 		max_time = ' --connect-timeout ' + options['max-time'].to_s + ' -m ' + (options['max-time'] + 10).to_s
 
-		o = exec('curl --compressed -sSv -o ' + tmp_o.path + cookie + headers +
-			user + agent + max_time + akamai_headers +
+		o = exec('curl' +
 			' -w \'\n' +
 			'! http_code: %{http_code}\n' +
 			'! size_download: %{size_download}\n' +
@@ -471,16 +473,20 @@ module CheckDomain using NewString
 			'! time_pretransfer: %{time_pretransfer}\n' +
 			'! time_starttransfer: %{time_starttransfer}\n' +
 			'! time_total: %{time_total}\n\'' +
+			' -o ' + tmp_o.path + max_time + akamai_headers +
+			' --compressed --silent --show-error --verbose' + cookie + headers + user + agent +
 			" --resolve #{host}:80:#{ip} --resolve #{host}:443:#{ip} '#{url}' 2>&1")
-		content = tmp_o.read; tmp_o.close; tmp_o.unlink
-		content = content.encode('UTF-16be', :invalid => :replace, :replace => '?').encode('UTF-8')
+		o_content = tmp_o.read; tmp_o.close; tmp_o.unlink
+		md5 = OpenSSL::Digest::MD5.hexdigest(o_content)
+		# we filter content to avoid regex errors
+		content = o_content.encode('UTF-16be', :invalid => :replace, :replace => '?').encode('UTF-8')
 		
 		# major error
 		# curl: (60) server certificate verification failed. CAfile: /etc/ssl/certs/ca-certificates.crt CRLfile: none
 		if o.lines.first =~ /^curl: \(/
 			[{'url' => url, 'error' => o.lines.first.chop}]
 		else
-			m = parse_curl(url, o, content)
+			m = parse_curl(url, o, content, md5)
 			if m['headers']['location']
 				if m['headers']['location'] =~ URI::regexp
 					loc = m['headers']['location']
@@ -504,11 +510,11 @@ module CheckDomain using NewString
 		end
 	end
 
-	def self.parse_curl(url, s, content)
+	def self.parse_curl(url, s, content, md5)
 		o = {
 			'url' => url,
 			'content' => content,
-			'md5' => OpenSSL::Digest::MD5.hexdigest(content),
+			'md5' => md5,
 			'request' => '',
 			'sent' => {},
 			'title' => '',
@@ -589,6 +595,20 @@ module CheckDomain using NewString
 			o += ('?' + query).s('url.query')
 		end
 		o
+	end
+	
+	def self.detect_host_change(co)
+		p = nil
+		i = co.size - 1
+		while i >= 0
+			uri = URI(co[i]['url'])
+			if p
+				co[i]['warning'] = "Host changed => IP spoofing disabled" if p != uri.host
+			end
+			p = uri.host
+			i -= 1
+		end
+		co
 	end
 
 	def self.format_curl(co, options)
