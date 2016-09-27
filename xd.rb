@@ -307,15 +307,10 @@ module CheckDomain using NewString
 
 	def self.akamai_host?(host)
 		o = dns(host)
-		if o =~ /(edgesuite\.net)/ or o =~ /(edgekey\.net)/ or o =~ /(edgesuite-staging\.net)/ or o =~ /(edgekey-staging\.net)/
-			if $1 =~ /staging/ then return 'staging' else return 'prod' end
+		if o =~ /(edgesuite|edgekey|akamai|akamaiedge)(|-staging)\.net/
+			if o =~ /staging/ then return 'staging' else return 'prod' end
 		end
 		false
-	end
-
-	def self.azure_ip?(ip)
-		# TODO
-		ip_in_list?(ip, list)
 	end
 
 	# https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/LocationsOfEdgeServers.html
